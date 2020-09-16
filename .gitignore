@@ -1,0 +1,3 @@
+# Ignore files from .idea/
+**/.idea/workspace.xml
+**/.idea/tasks.xml
