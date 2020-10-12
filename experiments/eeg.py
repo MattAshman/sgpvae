@@ -1,7 +1,11 @@
+import argparse
 import numpy as np
 import pandas as pd
 import tqdm
 import torch
+
+import sys
+sys.path.append('../')
 import sgpvae
 from data.eeg import load
 
@@ -111,3 +115,32 @@ def main(args):
 
     print('SMSE: {:.3f}\n'.format(smse))
     print('MLL: {:.3f}\n'.format(mll))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    # Kernel.
+    parser.add_argument('--init_lengthscale', default=0.05, type=float)
+    parser.add_argument('--init_scale', default=1., type=float)
+
+    # GPVAE.
+    parser.add_argument('--model', default='gpvae')
+    parser.add_argument('--pinference_net', default='indexnet', type=str)
+    parser.add_argument('--latent_dim', default=3, type=int)
+    parser.add_argument('--decoder_dims', default=[20], nargs='+',
+                        type=int)
+    parser.add_argument('--sigma', default=0.1, type=float)
+    parser.add_argument('--encoder_dims', default=[20, 20, 20],
+                        nargs='+', type=int)
+    parser.add_argument('--num_inducing', default=64, type=int)
+    parser.add_argument('--add_jitter', default=True,
+                        type=sgpvae.utils.misc.str2bool)
+
+    # Training.
+    parser.add_argument('--epochs', default=2000, type=int)
+    parser.add_argument('--cache_freq', default=100, type=int)
+    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--lr', default=0.001, type=float)
+
+    args = parser.parse_args()
+    main(args)
