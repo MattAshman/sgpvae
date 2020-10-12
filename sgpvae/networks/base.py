@@ -60,7 +60,7 @@ class LinearGaussian(nn.Module):
     """
     def __init__(self, in_dim, out_dim, hidden_dims=(64, 64),
                  initial_sigma=None, initial_mu=None, sigma=None,
-                 train_sigma=False, min_sigma=0., nonlinearity=F.relu):
+                 train_sigma=True, min_sigma=0., nonlinearity=F.relu):
         super().__init__()
 
         self.out_dim = out_dim

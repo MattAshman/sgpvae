@@ -2,12 +2,12 @@ import torch
 
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.kl import kl_divergence
-from ..utils.gaussian_utils import gaussian_diagonal_ll
+from ..utils.gaussian import gaussian_diagonal_ll
 
 __all__ = ['sa_estimator', 'td_estimator', 'elbo_estimator']
 
 
-def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=None):
+def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
     """Estimates the gradient of the negative SGP-VAE ELBO, ready for
     back-propagation, using the reparameterisation trick and analytical
     results where possible.
@@ -15,20 +15,10 @@ def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=None):
     :param model: SGP-VAE model.
     :param x: (tensor) input data.
     :param y: (tensor) output data.
-    :param mask: (tensor) mask to apply to output data.
-    :param num_samples: (int) number of Monte Carlo samples.
+    :param mask: (tensor, optional) mask to apply to output data.
+    :param num_samples: (int, optional) number of Monte Carlo samples.
     :param alpha: (float, optional) scales the likelihood, p(y|f).
     """
-    if mask is not None:
-        # Scale likelihood terms by the reciprocal of the proportion of
-        # missing observations.
-        if alpha is None:
-            num_nan = 1. * torch.sum(abs(1 - mask))
-            num_observations = y.shape[0] * y.shape[1]
-            alpha = 1. / (1. - num_nan / num_observations)
-    else:
-        alpha = 1.
-
     estimator = 0
 
     # Latent distributions.
@@ -64,7 +54,7 @@ def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=None):
     return -estimator
 
 
-def td_estimator(model, x, y, mask=None, num_samples=1, alpha=None):
+def td_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
     """Estimates the gradient of the negative SGP-VAE ELBO, ready for
     back-propagation, using the reparameterisation trick and Monte Carlo
     estimates.
@@ -72,20 +62,10 @@ def td_estimator(model, x, y, mask=None, num_samples=1, alpha=None):
     :param model: SGP-VAE model.
     :param x: (tensor) input data.
     :param y: (tensor) output data.
-    :param mask: (tensor) mask to apply to output data.
-    :param num_samples: (int) number of Monte Carlo samples.
+    :param mask: (tensor, optional) mask to apply to output data.
+    :param num_samples: (int, optional) number of Monte Carlo samples.
     :param alpha: (float, optional) scales the likelihood, p(y|f).
     """
-    if mask is not None:
-        # Scale likelihood terms by the reciprocal of the proportion of
-        # missing observations.
-        if alpha is None:
-            num_nan = 1. * torch.sum(abs(1 - mask))
-            num_observations = y.shape[0] * y.shape[1]
-            alpha = 1. / (1. - num_nan / num_observations)
-    else:
-        alpha = 1.
-
     estimator = 0
 
     # Latent distributions.
@@ -132,8 +112,8 @@ def elbo_estimator(model, x, y, mask=None, num_samples=1):
     :param model: GP-VAE model.
     :param x: (tensor) input data.
     :param y: (tensor) output data.
-    :param mask: (tensor) mask to apply to output data.
-    :param num_samples: (int) number of Monte Carlo samples.
+    :param mask: (tensor, optional) mask to apply to output data.
+    :param num_samples: (int, optional) number of Monte Carlo samples.
     """
     elbo = 0
 

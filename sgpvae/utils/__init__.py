@@ -1,4 +1,3 @@
-from . import dataset_utils, gaussian_utils, matrix_utils, metric_utils
+from . import dataset, gaussian, matrix, metric
 
-__all__ = ['dataset_utils', 'gaussian_utils', 'matrix_utils',
-           'metric_utils']
+__all__ = ['dataset', 'gaussian', 'matrix', 'metric']

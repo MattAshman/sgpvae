@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from torch.nn import functional as F
-from .base_networks import LinearNN, LinearGaussian
+from .base import LinearNN, LinearGaussian
 
 __all__ = ['IndexNet', 'FactorNet', 'PointNet']
 
@@ -14,7 +14,7 @@ class FactorNet(nn.Module):
 
     :param in_dim (int): dimension of the input variable.
     :param out_dim (int): dimension of the output variable.
-    :param hidden_dims (list, optional): dimensions of hidden layers.
+    :param h_dims (list, optional): dimensions of hidden layers.
     :param initial_sigma (float, optional): initial output sigma.
     :param initial_mu (float, optional): initial output mean.
     :param sigma (float, optional): if not None, sets the initial
@@ -25,9 +25,9 @@ class FactorNet(nn.Module):
     :param nonlinearity (function, optional): non-linearity to apply in
     between layers.
     """
-    def __init__(self, in_dim, out_dim, hidden_dims=(64, 64),
-                 initial_sigma=None, initial_mu=None, sigma=None,
-                 train_sigma=False, min_sigma=0., nonlinearity=F.relu):
+    def __init__(self, in_dim, out_dim, h_dims=(64, 64), initial_sigma=None,
+                 initial_mu=None, sigma=None, train_sigma=True,
+                 min_sigma=0., nonlinearity=F.relu):
         super().__init__()
 
         self.out_dim = out_dim
@@ -43,18 +43,14 @@ class FactorNet(nn.Module):
         self.networks = nn.ModuleList()
         if sigma is None:
             for _ in range(in_dim):
-                self.networks.append(LinearGaussian(1, out_dim, hidden_dims,
-                                                    initial_sigma,
-                                                    initial_mu,
-                                                    min_sigma=min_sigma,
-                                                    nonlinearity=nonlinearity))
+                self.networks.append(LinearGaussian(
+                    1, out_dim, h_dims, initial_sigma, initial_mu,
+                    min_sigma=min_sigma, nonlinearity=nonlinearity))
         else:
             for _ in range(in_dim):
-                self.networks.append(LinearGaussian(1, out_dim, hidden_dims,
-                                                    initial_sigma,
-                                                    initial_mu, sigma,
-                                                    train_sigma, min_sigma,
-                                                    nonlinearity))
+                self.networks.append(LinearGaussian(
+                    1, out_dim, h_dims, initial_sigma, initial_mu, sigma,
+                    train_sigma, min_sigma, nonlinearity))
 
     def forward(self, x, mask=None):
         """Returns parameters of a diagonal Gaussian distribution."""
@@ -107,7 +103,7 @@ class IndexNet(nn.Module):
     """
     def __init__(self, in_dim, out_dim, inter_dim, h_dims=(64, 64),
                  rho_dims=(64, 64), initial_sigma=None, initial_mu=None,
-                 sigma=None, train_sigma=False, min_sigma=0.,
+                 sigma=None, train_sigma=True, min_sigma=0.,
                  nonlinearity=F.relu):
         super().__init__()
 
@@ -156,7 +152,6 @@ class IndexNet(nn.Module):
 class PointNet(nn.Module):
     """PointNet from Spatio-Temporal Variational Autoencoders.
 
-    :param in_dim (int): dimension of the input variable.
     :param out_dim (int): dimension of the output variable.
     :param inter_dim (int): dimension of intermediate representation.
     :param h_dims (list, optional): dimension of the encoding function.
@@ -173,7 +168,7 @@ class PointNet(nn.Module):
     """
     def __init__(self, out_dim, inter_dim, h_dims=(64, 64), rho_dims=(64, 64),
                  initial_sigma=None, initial_mu=None, sigma=None,
-                 train_sigma=False, min_sigma=0., nonlinearity=F.relu):
+                 train_sigma=True, min_sigma=0., nonlinearity=F.relu):
         super().__init__()
 
         self.out_dim = out_dim
