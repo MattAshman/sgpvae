@@ -40,24 +40,27 @@ def main(args):
     if args.pinference_net == 'factornet':
         encoder = sgpvae.networks.FactorNet(
             in_dim=y.shape[1], out_dim=args.latent_dim,
-            h_dims=args.h_dims, min_sigma=args.min_sigma)
+            h_dims=args.h_dims, min_sigma=args.min_sigma,
+            initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'indexnet':
         encoder = sgpvae.networks.IndexNet(
             in_dim=y.shape[1], out_dim=args.latent_dim,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
-            rho_dims=args.rho_dims, min_sigma=args.min_sigma)
+            rho_dims=args.rho_dims, min_sigma=args.min_sigma,
+            initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'pointnet':
         encoder = sgpvae.networks.PointNet(
             out_dim=args.latent_dim, inter_dim=args.inter_dim,
             h_dims=args.h_dims, rho_dims=args.rho_dims,
-            min_sigma=args.min_sigma)
+            min_sigma=args.min_sigma, initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'zeroimputation':
         encoder = sgpvae.networks.LinearGaussian(
             in_dim=y.shape[1], out_dim=args.latent_dim,
-            hidden_dims=args.h_dims, min_sigma=args.min_sigma)
+            hidden_dims=args.h_dims, min_sigma=args.min_sigma,
+            initial_sigma=args.initial_sigma)
 
     else:
         raise ValueError('{} is not a partial inference network.'.format(
@@ -155,6 +158,7 @@ if __name__ == '__main__':
     parser.add_argument('--add_jitter', default=True,
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--min_sigma', default=1e-3, type=float)
+    parser.add_argument('--initial_sigma', default=.1, type=float)
 
     # Training.
     parser.add_argument('--epochs', default=2000, type=int)

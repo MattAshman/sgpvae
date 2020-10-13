@@ -160,6 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('--add_jitter', default=True,
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--min_sigma', default=1e-3, type=float)
+    parser.add_argument('--initial_sigma', default=.1, type=float)
 
     # Training.
     parser.add_argument('--epochs', default=2000, type=int)
