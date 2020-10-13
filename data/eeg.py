@@ -94,8 +94,7 @@ def _extract_trials(fps):
 
 
 def _parse():
-    wbml.out.out('Parsing EEG data. This may take a while.')
-
+    print('Parsing EEG data. This may take a while.')
     numbers = [('c', n) for n in [337, 338, 339, 340, 341,
                                   342, 344, 345, 346, 347]] + \
               [('a', n) for n in [364, 365, 368, 369, 370,

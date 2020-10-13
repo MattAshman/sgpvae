@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from torch.distributions import MultivariateNormal
 from .kernels import KernelList
+from .utils.matrix import add_diagonal
 
 __all__ = ['VAE', 'GPVAE', 'SGPVAE']
 
@@ -44,7 +45,7 @@ class VAE(nn.Module):
         qf_cov = qf_sigma.pow(2).diag_embed()
 
         # Prior.
-        pf_mu, pf_cov = self.get_latent_prior(x)
+        pf_mu, pf_cov = self.latent_prior(x)
 
         return qf_mu, qf_cov, pf_mu, pf_cov
 
@@ -63,7 +64,7 @@ class VAE(nn.Module):
 
     def predict_y(self, **kwargs):
         """Sample predictive posterior."""
-        f_samples = self.sample_latent_posterior(**kwargs)
+        f_samples = self.sample_posterior(**kwargs)
 
         y_mus, y_sigmas, y_samples = [], [], []
         for f in f_samples:
@@ -129,7 +130,7 @@ class GPVAE(VAE):
         lf_y_root_precision = lf_y_sigma.pow(-1).diag_embed()
 
         # GP prior.
-        pf_mu, kff = self.get_latent_prior(x)
+        pf_mu, kff = self.latent_prior(x)
 
         # See GPML section 3.4.3.
         # TODO: Make more efficient?
@@ -141,7 +142,7 @@ class GPVAE(VAE):
 
         if x_test is not None:
             # GP prior.
-            ps_mu, kss = self.get_latent_prior(x_test)
+            ps_mu, kss = self.latent_prior(x_test)
 
             # GP conditional prior.
             ksf = self.kernels.forward(x_test, x)
@@ -165,7 +166,7 @@ class GPVAE(VAE):
 
     def sample_posterior(self, x, y, mask=None, num_samples=1, **kwargs):
         """Sample latent posterior."""
-        qf_mu, qf_cov = self.get_latent_dists(x, y, mask, **kwargs)[:2]
+        qf_mu, qf_cov = self.latent_dists(x, y, mask, **kwargs)[:2]
 
         qf = MultivariateNormal(qf_mu, qf_cov)
         samples = [qf.sample() for _ in range(num_samples)]
@@ -209,7 +210,7 @@ class SGPVAE(GPVAE):
         lf_y_precision = lf_y_sigma.pow(-2).diag_embed()
 
         # GP prior.
-        pu_mu, kuu = self.get_latent_prior(self.z)
+        pu_mu, kuu = self.latent_prior(self.z)
 
         # GP conditional prior.
         kfu = self.kernels.forward(x, self.z)
@@ -223,7 +224,7 @@ class SGPVAE(GPVAE):
 
         if x_test is not None:
             # GP prior.
-            ps_mu, kss = self.get_latent_prior(x_test, diag=(not full_cov))
+            ps_mu, kss = self.latent_prior(x_test, diag=(not full_cov))
 
             # GP conditional prior.
             ksu = self.kernels.forward(x_test, self.z)
@@ -236,7 +237,7 @@ class SGPVAE(GPVAE):
         else:
             # GP prior.
             # Note that only diagonals are needed when optimising ELBO.
-            pf_mu, kff = self.get_latent_prior(x, diag=(not full_cov))
+            pf_mu, kff = self.latent_prior(x, diag=(not full_cov))
 
             qf_cov = kff - kfu.matmul(kuu_inv - phi).matmul(kuf)
             qf_mu = kfu.matmul(kuu_inv.matmul(qu_mu)).squeeze(2)
@@ -246,10 +247,10 @@ class SGPVAE(GPVAE):
 
             return qf_mu, qf_cov, qu_mu, qu_cov, pu_mu, kuu, lf_y_mu, lf_y_cov
 
-    def sample_latent_posterior(self, x, y, mask=None, num_samples=1,
-                                full_cov=True, **kwargs):
+    def sample_posterior(self, x, y, mask=None, num_samples=1,
+                         full_cov=True, **kwargs):
         """Sample latent posterior."""
-        qf_mu, qf_cov = self.get_latent_dists(
+        qf_mu, qf_cov = self.latent_dists(
             x, y, mask, full_cov=full_cov, **kwargs)[:2]
 
         if full_cov:

@@ -4,7 +4,7 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.kl import kl_divergence
 from ..utils.gaussian import gaussian_diagonal_ll
 
-__all__ = ['sa_estimator', 'td_estimator', 'elbo_estimator']
+__all__ = ['sa_estimator', 'ds_estimator', 'elbo_estimator']
 
 
 def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
@@ -23,7 +23,7 @@ def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
 
     # Latent distributions.
     qf_mu, qf_cov, qu_mu, qu_cov, pu_mu, pu_cov, lf_y_mu, lf_y_cov = \
-        model.get_latent_dists(x, y, mask)
+        model.latent_dists(x, y, mask)
 
     # Required distributions.
     pu = MultivariateNormal(pu_mu, pu_cov)
@@ -54,7 +54,7 @@ def sa_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
     return -estimator
 
 
-def td_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
+def ds_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
     """Estimates the gradient of the negative SGP-VAE ELBO, ready for
     back-propagation, using the reparameterisation trick and Monte Carlo
     estimates.
@@ -70,7 +70,7 @@ def td_estimator(model, x, y, mask=None, num_samples=1, alpha=1.):
 
     # Latent distributions.
     qf_mu, qf_cov, qu_mu, qu_cov, pu_mu, pu_cov, lf_y_mu, lf_y_cov = \
-        model.get_latent_dists(x, y, mask)
+        model.latent_dists(x, y, mask)
 
     # Required distributions.
     pu = MultivariateNormal(pu_mu, pu_cov)
@@ -119,7 +119,7 @@ def elbo_estimator(model, x, y, mask=None, num_samples=1):
 
     # Latent distributions.
     qf_mu, qf_cov, qu_mu, qu_cov, pu_mu, pu_cov, lf_y_mu, lf_y_cov = \
-        model.get_latent_dists(x, y, mask)
+        model.latent_dists(x, y, mask)
 
     # Required distributions for KL divergence.
     pu = MultivariateNormal(pu_mu, pu_cov)

@@ -33,7 +33,9 @@ class FactorNet(nn.Module):
         self.out_dim = out_dim
 
         # Rescale sigmas for multiple outputs.
-        initial_sigma = initial_sigma * in_dim ** 0.5
+        if initial_sigma is not None:
+            initial_sigma = initial_sigma * in_dim ** 0.5
+
         min_sigma = min_sigma * in_dim ** 0.5
 
         if sigma is not None:
@@ -122,7 +124,7 @@ class IndexNet(nn.Module):
 
     def forward(self, x, mask=None):
         """Returns parameters of a diagonal Gaussian distribution."""
-        out = torch.zeros(x.shape[0], x.shape[1], self.middle_dim)
+        out = torch.zeros(x.shape[0], x.shape[1], self.inter_dim)
 
         # Pass through individual networks.
         for dim, x_dim in enumerate(x.transpose(0, 1)):
@@ -185,7 +187,7 @@ class PointNet(nn.Module):
 
     def forward(self, x, mask=None):
         """Returns parameters of a diagonal Gaussian distribution."""
-        out = torch.zeros(x.shape[0], x.shape[1], self.middle_dim)
+        out = torch.zeros(x.shape[0], x.shape[1], self.inter_dim)
 
         # Pass through first network.
         for dim, x_dim in enumerate(x.transpose(0, 1)):

@@ -126,7 +126,7 @@ def elbo_estimator(model, x, y, mask=None, num_samples=1):
 
     # Latent distributions.
     qf_mu, qf_cov, pf_mu, pf_cov, lf_y_mu, lf_y_cov = \
-        model.get_latent_dists(x, y, mask)
+        model.latent_dists(x, y, mask)
 
     sum_cov = pf_cov + lf_y_cov
 

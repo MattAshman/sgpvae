@@ -4,19 +4,24 @@ import pandas as pd
 import tqdm
 import torch
 
+from scipy.cluster.vq import kmeans2
+
 # Install modules from parent directory.
 import sys
 sys.path.append('../')
 import sgpvae
-from data.eeg import load
+from data.jura import load
 
 torch.set_default_dtype(torch.float64)
 
 
 def main(args):
-    # Load EEG data.
-    _, train, test = load()
-    x = np.array(train.index)
+    # Load Jura data.
+    train, test = load()
+
+    # Extract data into numpy arrays.
+    x = [[i, j] for (i, j) in train.index]
+    x = np.array(x)
     y = np.array(train)
 
     # Normalise observations.
@@ -40,7 +45,7 @@ def main(args):
     if args.pinference_net == 'factornet':
         encoder = sgpvae.networks.FactorNet(
             in_dim=y.shape[1], out_dim=args.latent_dim,
-            h_dims=args.h_dims, min_sigma=args.min_sigma)
+            h_dims=args.h_dims, min_sigma=args.min_sigma, initial_sigma=.1)
 
     elif args.pinference_net == 'indexnet':
         encoder = sgpvae.networks.IndexNet(
@@ -67,12 +72,12 @@ def main(args):
     if args.model == 'gpvae':
         model = sgpvae.models.GPVAE(encoder, decoder, args.latent_dim,
                                     kernel, add_jitter=args.add_jitter)
-        loss_fn = sgpvae.estimators.gpvae.sa_estimator
+        loss_fn = sgpvae.estimators.gpvae.ds_estimator
         elbo_estimator = sgpvae.estimators.gpvae.elbo_estimator
 
     elif args.model == 'sgpvae':
-        z_init = torch.linspace(
-            0, x[-1].item(), steps=args.num_inducing).unsqueeze(1)
+        z_init = kmeans2(x.numpy(), args.num_inducing, minit='points')[0]
+        z_init = torch.tensor(z_init)
 
         model = sgpvae.models.SGPVAE(
             encoder, decoder, args.latent_dim, kernel, z_init,
@@ -127,10 +132,10 @@ def main(args):
     var = pd.DataFrame(sigma ** 2, index=train.index,
                        columns=train.columns)
 
-    smse = sgpvae.utils.metric.smse(pred, test).mean()
+    mae = sgpvae.utils.metric.mae(pred, test).mean()
     mll = sgpvae.utils.metric.mll(pred, var, test).mean()
 
-    print('\nSMSE: {:.3f}'.format(smse))
+    print('\nMAE: {:.3f}'.format(mae))
     print('MLL: {:.3f}'.format(mll))
     print('ELBO: {:.3f}'.format(elbo))
 
@@ -138,13 +143,13 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # Kernel.
-    parser.add_argument('--init_lengthscale', default=0.05, type=float)
+    parser.add_argument('--init_lengthscale', default=1., type=float)
     parser.add_argument('--init_scale', default=1., type=float)
 
     # GPVAE.
     parser.add_argument('--model', default='gpvae')
     parser.add_argument('--pinference_net', default='indexnet', type=str)
-    parser.add_argument('--latent_dim', default=3, type=int)
+    parser.add_argument('--latent_dim', default=2, type=int)
     parser.add_argument('--decoder_dims', default=[20], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)
@@ -159,7 +164,7 @@ if __name__ == '__main__':
     # Training.
     parser.add_argument('--epochs', default=2000, type=int)
     parser.add_argument('--cache_freq', default=100, type=int)
-    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
 
     args = parser.parse_args()
