@@ -52,7 +52,7 @@ def _parse():
     test_idx = [[] for _ in observations]
     for week, week_df in df.groupby('week'):
         # Set TAVG for middle three days to missing.
-        mid_df = week_df[week_df['time'].isin([1, 2, 3, 4, 5])]
+        mid_df = week_df[week_df['day'].isin([1, 2, 3, 4, 5])]
         test_idx[2] += list(mid_df.index)
 
         # Set 25% of TMAX and TMIN values to missing.
@@ -89,13 +89,13 @@ def _parse():
     dfs = [train, train_1980, train_1981, test_1980, test_1981]
     # Extract stations per group.
     for name, df in zip(names, dfs):
-        per_group = []
-        df.groupby('group').apply(lambda x: per_group.append(x.copy()))
-        data[name] = per_group
+        per_week = []
+        df.groupby('week').apply(lambda x: per_week.append(x.copy()))
+        data[name] = per_week
 
     # Extract dates.
-    data['dates_1980'] = [x.iloc[0].group for x in data['train_1980']]
-    data['dates_1981'] = [x.iloc[0].group for x in data['train_1981']]
+    data['dates_1980'] = [x.iloc[0].week for x in data['train_1980']]
+    data['dates_1981'] = [x.iloc[0].week for x in data['train_1981']]
 
     # Save experiment data.
     with open(cache_weekly, 'wb') as f:

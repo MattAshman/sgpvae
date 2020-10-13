@@ -14,6 +14,9 @@ from data.japan import load
 
 torch.set_default_dtype(torch.float64)
 
+inputs = ['lat', 'lon', 'elev', 'day']
+observations = ['PRCP', 'TMAX', 'TMIN', 'TAVG', 'SNWD']
+
 
 def preprocess():
     data = load()
@@ -24,9 +27,6 @@ def preprocess():
     test_1980 = data['test_1980']
     train_1981 = data['train_1981']
     test_1981 = data['test_1981']
-
-    inputs = ['lat', 'lon', 'elev', 'day']
-    observations = ['PRCP', 'TMAX', 'TMIN', 'TAVG', 'SNWD']
 
     # Extract data into numpy arrays and perform preprocessing.
     x_train = np.array(list(map(lambda x: x[inputs].to_numpy(), train)))
@@ -92,14 +92,47 @@ def preprocess():
     return preprocessed_data
 
 
+def predict(model, dataset, test, observations, y_mean, y_std):
+    preds = []
+    variances = []
+
+    test_iter = tqdm.tqdm(zip(dataset.x, dataset.y, dataset.m, test),
+                          desc='Evaluation')
+
+    for x_b, y_b, m_b, df_b in test_iter:
+        x_b = x_b.squeeze(0)
+        y_b = y_b.squeeze(0)
+        m_b = m_b.squeeze(0)
+
+        # Test predictions.
+        mean, sigma = model.predict_y(
+            x=x_b, y=y_b, mask=m_b, num_samples=100)[:2]
+
+        mean = mean.numpy() * y_std + y_mean
+        sigma = sigma.numpy() * y_std
+
+        # Convert to DataFrame and add to lists.
+        pred = pd.DataFrame(mean, index=df_b.index, columns=observations)
+        var = pd.DataFrame(sigma**2, index=df_b.index, columns=observations)
+
+        preds.append(pred)
+        variances.append(var)
+
+    preds = pd.concat(preds)
+    variances = pd.concat(variances)
+
+    return preds, variances
+
+
 def main(args):
     data = preprocess()
+    observations = ['']
 
     # Set up dataset and dataloaders.
-    train_dataset = sgpvae.utils.dataset.MetaTupleDataset(
+    dataset = sgpvae.utils.dataset.MetaTupleDataset(
         data['x_train'], data['y_train'], missing=True)
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=1, shuffle=False)
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=1, shuffle=False)
 
     # For model evaluation.
     train_1980_dataset = sgpvae.utils.dataset.MetaTupleDataset(
@@ -111,17 +144,17 @@ def main(args):
     kernel = sgpvae.kernels.RBFKernel(
         lengthscale=args.init_lengthscale, scale=args.init_scale)
     decoder = sgpvae.networks.LinearGaussian(
-        in_dim=args.latent_dim, out_dim=5,
+        in_dim=args.latent_dim, out_dim=len(observations),
         hidden_dims=args.decoder_dims, sigma=args.sigma)
 
     if args.pinference_net == 'factornet':
         encoder = sgpvae.networks.FactorNet(
-            in_dim=5, out_dim=args.latent_dim,
+            in_dim=len(observations), out_dim=args.latent_dim,
             h_dims=args.h_dims, min_sigma=args.min_sigma, initial_sigma=.1)
 
     elif args.pinference_net == 'indexnet':
         encoder = sgpvae.networks.IndexNet(
-            in_dim=5, out_dim=args.latent_dim,
+            in_dim=len(observations), out_dim=args.latent_dim,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
             rho_dims=args.rho_dims, min_sigma=args.min_sigma)
 
@@ -133,7 +166,7 @@ def main(args):
 
     elif args.pinference_net == 'zeroimputation':
         encoder = sgpvae.networks.LinearGaussian(
-            in_dim=5, out_dim=args.latent_dim,
+            in_dim=len(observations), out_dim=args.latent_dim,
             hidden_dims=args.h_dims, min_sigma=args.min_sigma)
 
     else:
@@ -165,3 +198,91 @@ def main(args):
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
+
+    # Model training.
+    model.train(True)
+    optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    epoch_iter = tqdm.tqdm(range(args.epochs), desc='Epoch')
+    for epoch in epoch_iter:
+        losses = []
+        for (x_b, y_b, m_b, idx_b) in loader:
+            # Get rid of 3rd-dimension.
+            x_b = x_b.squeeze(0)
+            y_b = y_b.squeeze(0)
+            m_b = m_b.squeeze(0)
+
+            optimiser.zero_grad()
+            loss = loss_fn(model, x=x_b, y=y_b, mask=m_b, num_samples=1)
+            loss.backward()
+            optimiser.step()
+
+            losses.append(loss.item())
+
+        epoch_iter.set_postfix(loss=np.mean(losses))
+
+        if epoch % args.cache_freq == 0:
+            elbo = 0
+            for (x_b, y_b, m_b, idx_b) in loader:
+                elbo += elbo_estimator(model, x_b, y_b, m_b, num_samples=100)
+
+            tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
+
+    # Evaluate model performance.
+    elbo = 0
+    for (x_b, y_b, m_b, idx_b) in loader:
+        elbo += elbo_estimator(model, x_b, y_b, m_b, num_samples=100)
+
+    pred_1980, var_1980 = predict(
+        model, train_1980_dataset, data['test_1980'], observations,
+        data['y_mean'], data['y_std'])
+    rmse_1980 = sgpvae.utils.metric.rmse(
+        pred_1980, pd.concat(data['test_1980']))
+    mll_1980 = sgpvae.utils.metric.mll(
+        pred_1980, var_1980, pd.concat(data['test_1980']))
+
+    pred_1981, var_1981 = predict(
+        model, train_1981_dataset, data['test_1981'], observations,
+        data['y_mean'], data['y_std'])
+    rmse_1981 = sgpvae.utils.metric.rmse(
+        pred_1981, pd.concat(data['test_1980']))
+    mll_1981 = sgpvae.utils.metric.mll(
+        pred_1981, var_1981, pd.concat(data['test_1980']))
+
+    print('\nELBO: {:.3f}'.format(elbo))
+    print('\nRMSE 1980: {:.3f}'.format(rmse_1980))
+    print('MLL 1980: {:.3f}'.format(mll_1980))
+    print('\nRMSE 1981: {:.3f}'.format(rmse_1981))
+    print('MLL 1981: {:.3f}'.format(mll_1981))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    # Kernel.
+    parser.add_argument('--init_lengthscale', default=1., type=float)
+    parser.add_argument('--init_scale', default=1., type=float)
+
+    # GPVAE.
+    parser.add_argument('--model', default='gpvae')
+    parser.add_argument('--pinference_net', default='indexnet', type=str)
+    parser.add_argument('--latent_dim', default=3, type=int)
+    parser.add_argument('--decoder_dims', default=[20, 20], nargs='+',
+                        type=int)
+    parser.add_argument('--sigma', default=0.1, type=float)
+    parser.add_argument('--h_dims', default=[20, 20], nargs='+', type=int)
+    parser.add_argument('--rho_dims', default=[20, 20], nargs='+', type=int)
+    parser.add_argument('--inter_dim', default=20, type=int)
+    parser.add_argument('--num_inducing', default=64, type=int)
+    parser.add_argument('--add_jitter', default=True,
+                        type=sgpvae.utils.misc.str2bool)
+    parser.add_argument('--min_sigma', default=1e-3, type=float)
+    parser.add_argument('--initial_sigma', default=.1, type=float)
+
+    # Training.
+    parser.add_argument('--epochs', default=51, type=int)
+    parser.add_argument('--cache_freq', default=5, type=int)
+    parser.add_argument('--batch_size', type=int)
+    parser.add_argument('--lr', default=0.001, type=float)
+
+    args = parser.parse_args()
+    main(args)
