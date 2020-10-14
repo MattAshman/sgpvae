@@ -29,24 +29,18 @@ def preprocess():
     test_1981 = data['test_1981']
 
     # Extract data into numpy arrays and perform preprocessing.
-    x_train = np.array(list(map(lambda x: x[inputs].to_numpy(), train)))
-    y_train = np.array(list(map(lambda x: x[observations].to_numpy(), train)))
+    x_train = list(map(lambda x: x[inputs].to_numpy(), train))
+    y_train = list(map(lambda x: x[observations].to_numpy(), train))
 
     # 1980 data.
-    x_train_1980 = np.array(list(map(lambda x: x[inputs].to_numpy(),
-                                     train_1980)))
-    y_train_1980 = np.array(list(map(lambda x: x[observations].to_numpy(),
-                                     train_1980)))
-    x_test_1980 = np.array(list(map(lambda x: x[inputs].to_numpy(),
-                                    test_1980)))
+    x_train_1980 = list(map(lambda x: x[inputs].to_numpy(), train_1980))
+    y_train_1980 = list(map(lambda x: x[observations].to_numpy(), train_1980))
+    x_test_1980 = list(map(lambda x: x[inputs].to_numpy(), test_1980))
 
     # 1981 data.
-    x_train_1981 = np.array(list(map(lambda x: x[inputs].to_numpy(),
-                                     train_1981)))
-    y_train_1981 = np.array(list(map(lambda x: x[observations].to_numpy(),
-                                     train_1981)))
-    x_test_1981 = np.array(list(map(lambda x: x[inputs].to_numpy(),
-                                    test_1981)))
+    x_train_1981 = list(map(lambda x: x[inputs].to_numpy(), train_1981))
+    y_train_1981 = list(map(lambda x: x[observations].to_numpy(), train_1981))
+    x_test_1981 = list(map(lambda x: x[inputs].to_numpy(), test_1981))
 
     # Normalise data.
     y_mean = df[observations].mean().to_numpy()
@@ -126,7 +120,6 @@ def predict(model, dataset, test, observations, y_mean, y_std):
 
 def main(args):
     data = preprocess()
-    observations = ['']
 
     # Set up dataset and dataloaders.
     dataset = sgpvae.utils.dataset.MetaTupleDataset(
@@ -224,7 +217,13 @@ def main(args):
         if epoch % args.cache_freq == 0:
             elbo = 0
             for (x_b, y_b, m_b, idx_b) in loader:
-                elbo += elbo_estimator(model, x_b, y_b, m_b, num_samples=100)
+                # Get rid of 3rd-dimension.
+                x_b = x_b.squeeze(0)
+                y_b = y_b.squeeze(0)
+                m_b = m_b.squeeze(0)
+
+                elbo += elbo_estimator(model, x_b, y_b, m_b,
+                                       num_samples=100)
 
             tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
 
@@ -263,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('--init_scale', default=1., type=float)
 
     # GPVAE.
-    parser.add_argument('--model', default='gpvae')
+    parser.add_argument('--model', default='sgpvae')
     parser.add_argument('--pinference_net', default='indexnet', type=str)
     parser.add_argument('--latent_dim', default=3, type=int)
     parser.add_argument('--decoder_dims', default=[20, 20], nargs='+',
@@ -273,6 +272,8 @@ if __name__ == '__main__':
     parser.add_argument('--rho_dims', default=[20, 20], nargs='+', type=int)
     parser.add_argument('--inter_dim', default=20, type=int)
     parser.add_argument('--num_inducing', default=64, type=int)
+    parser.add_argument('--fixed_inducing', default=False,
+                        type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--add_jitter', default=True,
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--min_sigma', default=1e-3, type=float)

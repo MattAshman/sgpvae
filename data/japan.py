@@ -62,7 +62,7 @@ def _parse():
         test_idx[1] += list(np.random.choice(list(week_df.index), m,
                                              replace=False))
 
-    # Train indices are all those that aren't in test indeces.
+    # Train indices are all those that aren't in test indices.
     train_idx = [list(set(df.index.tolist()) - set(idx)) for idx in test_idx]
 
     train = df.copy()
@@ -90,7 +90,9 @@ def _parse():
     # Extract stations per group.
     for name, df in zip(names, dfs):
         per_week = []
-        df.groupby('week').apply(lambda x: per_week.append(x.copy()))
+        for week, week_df in df.groupby('week'):
+            per_week.append(week_df.copy())
+
         data[name] = per_week
 
     # Extract dates.
@@ -98,5 +100,8 @@ def _parse():
     data['dates_1981'] = [x.iloc[0].week for x in data['train_1981']]
 
     # Save experiment data.
+    if not os.path.exists(os.path.dirname(cache_weekly)):
+        os.makedirs(os.path.dirname(cache_weekly))
+
     with open(cache_weekly, 'wb') as f:
         pickle.dump(data, f)
