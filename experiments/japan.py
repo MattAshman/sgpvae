@@ -100,7 +100,7 @@ def predict(model, dataset, test, observations, y_mean, y_std):
 
         # Test predictions.
         mean, sigma = model.predict_y(
-            x=x_b, y=y_b, mask=m_b, num_samples=100)[:2]
+            x=x_b, y=y_b, mask=m_b, num_samples=10)[:2]
 
         mean = mean.numpy() * y_std + y_mean
         sigma = sigma.numpy() * y_std
@@ -196,10 +196,11 @@ def main(args):
     model.train(True)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    epoch_iter = tqdm.tqdm(range(args.epochs), desc='Epoch')
+    epoch_iter = tqdm.tqdm(range(args.epochs), desc='Epoch', leave=True)
     for epoch in epoch_iter:
         losses = []
-        for (x_b, y_b, m_b, idx_b) in loader:
+        batch_iter = tqdm.tqdm(iter(loader), desc='Batch', leave=False)
+        for x_b, y_b, m_b, idx_b in batch_iter:
             # Get rid of 3rd-dimension.
             x_b = x_b.squeeze(0)
             y_b = y_b.squeeze(0)
@@ -215,22 +216,36 @@ def main(args):
         epoch_iter.set_postfix(loss=np.mean(losses))
 
         if epoch % args.cache_freq == 0:
-            elbo = 0
-            for (x_b, y_b, m_b, idx_b) in loader:
-                # Get rid of 3rd-dimension.
-                x_b = x_b.squeeze(0)
-                y_b = y_b.squeeze(0)
-                m_b = m_b.squeeze(0)
+            pred_1980, var_1980 = predict(
+                model, train_1980_dataset, data['test_1980'], observations,
+                data['y_mean'], data['y_std'])
+            rmse_1980 = sgpvae.utils.metric.rmse(
+                pred_1980, pd.concat(data['test_1980']))
+            mll_1980 = sgpvae.utils.metric.mll(
+                pred_1980, var_1980, pd.concat(data['test_1980']))
 
-                elbo += elbo_estimator(model, x_b, y_b, m_b,
-                                       num_samples=100)
+            pred_1981, var_1981 = predict(
+                model, train_1981_dataset, data['test_1981'], observations,
+                data['y_mean'], data['y_std'])
+            rmse_1981 = sgpvae.utils.metric.rmse(
+                pred_1981, pd.concat(data['test_1981']))
+            mll_1981 = sgpvae.utils.metric.mll(
+                pred_1981, var_1981, pd.concat(data['test_1981']))
 
-            tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
+            tqdm.tqdm.write('\nRMSE 1980: {:.3f}'.format(rmse_1980.mean()))
+            tqdm.tqdm.write('MLL 1980: {:.3f}'.format(mll_1980.mean()))
+            tqdm.tqdm.write('\nRMSE 1981: {:.3f}'.format(rmse_1981.mean()))
+            tqdm.tqdm.write('MLL 1981: {:.3f}'.format(mll_1981.mean()))
 
     # Evaluate model performance.
     elbo = 0
     for (x_b, y_b, m_b, idx_b) in loader:
-        elbo += elbo_estimator(model, x_b, y_b, m_b, num_samples=100)
+        # Get rid of 3rd-dimension.
+        x_b = x_b.squeeze(0)
+        y_b = y_b.squeeze(0)
+        m_b = m_b.squeeze(0)
+
+        elbo += elbo_estimator(model, x_b, y_b, m_b, num_samples=10)
 
     pred_1980, var_1980 = predict(
         model, train_1980_dataset, data['test_1980'], observations,
@@ -271,7 +286,7 @@ if __name__ == '__main__':
     parser.add_argument('--h_dims', default=[20, 20], nargs='+', type=int)
     parser.add_argument('--rho_dims', default=[20, 20], nargs='+', type=int)
     parser.add_argument('--inter_dim', default=20, type=int)
-    parser.add_argument('--num_inducing', default=64, type=int)
+    parser.add_argument('--num_inducing', default=100, type=int)
     parser.add_argument('--fixed_inducing', default=False,
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--add_jitter', default=True,
