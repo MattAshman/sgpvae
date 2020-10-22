@@ -1,3 +1,3 @@
-from . import gpvae, sgpvae, vae
+from . import gpvae, sgpvae, vae, gprnvae, sgprnvae
 
-__all__ = ['gpvae', 'sgpvae', 'vae']
+__all__ = ['gpvae', 'sgpvae', 'vae', 'gprnvae', 'sgprnvae']

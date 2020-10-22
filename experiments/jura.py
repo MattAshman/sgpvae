@@ -36,33 +36,54 @@ def main(args):
         dataset, batch_size=args.batch_size, shuffle=True)
 
     # Model construction.
-    kernel = sgpvae.kernels.RBFKernel(
-        lengthscale=args.init_lengthscale, scale=args.init_scale)
-    decoder = sgpvae.networks.LinearGaussian(
-        in_dim=args.latent_dim, out_dim=y.shape[1],
-        hidden_dims=args.decoder_dims, sigma=args.sigma)
+    if args.model in ['gpvae', 'sgpvae', 'vae']:
+        kernel = sgpvae.kernels.RBFKernel(
+            lengthscale=args.init_lengthscale, scale=args.init_scale)
+        decoder = sgpvae.networks.LinearGaussian(
+            in_dim=args.latent_dim, out_dim=y.shape[1],
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+
+        latent_dim = args.latent_dim
+
+    elif args.model in ['gprnvae', 'sgprnvae']:
+        f_kernel = sgpvae.kernels.RBFKernel(
+            lengthscale=args.init_f_lengthscale, scale=args.init_f_scale)
+        w_kernel = sgpvae.kernels.RBFKernel(
+            lengthscale=args.init_w_lengthscale, scale=args.init_w_scale)
+
+        decoder = sgpvae.networks.LinearGaussian(
+            in_dim=args.w_dim, out_dim=y.shape[1],
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+
+        latent_dim = args.f_dim + args.f_dim * args.w_dim
+
+    else:
+        raise ValueError('{} is not a model'.format(args.model))
 
     if args.pinference_net == 'factornet':
         encoder = sgpvae.networks.FactorNet(
-            in_dim=y.shape[1], out_dim=args.latent_dim,
-            h_dims=args.h_dims, min_sigma=args.min_sigma, initial_sigma=.1)
+            in_dim=y.shape[1], out_dim=latent_dim,
+            h_dims=args.h_dims, min_sigma=args.min_sigma,
+            initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'indexnet':
         encoder = sgpvae.networks.IndexNet(
-            in_dim=y.shape[1], out_dim=args.latent_dim,
+            in_dim=y.shape[1], out_dim=latent_dim,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
-            rho_dims=args.rho_dims, min_sigma=args.min_sigma)
+            rho_dims=args.rho_dims, min_sigma=args.min_sigma,
+            initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'pointnet':
         encoder = sgpvae.networks.PointNet(
-            out_dim=args.latent_dim, inter_dim=args.inter_dim,
+            out_dim=latent_dim, inter_dim=args.inter_dim,
             h_dims=args.h_dims, rho_dims=args.rho_dims,
-            min_sigma=args.min_sigma)
+            min_sigma=args.min_sigma, initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'zeroimputation':
         encoder = sgpvae.networks.LinearGaussian(
-            in_dim=y.shape[1], out_dim=args.latent_dim,
-            hidden_dims=args.h_dims, min_sigma=args.min_sigma)
+            in_dim=y.shape[1], out_dim=latent_dim,
+            hidden_dims=args.h_dims, min_sigma=args.min_sigma,
+            initial_sigma=args.initial_sigma)
 
     else:
         raise ValueError('{} is not a partial inference network.'.format(
@@ -70,8 +91,9 @@ def main(args):
 
     # Construct SGP-VAE model and choose loss function.
     if args.model == 'gpvae':
-        model = sgpvae.models.GPVAE(encoder, decoder, args.latent_dim,
-                                    kernel, add_jitter=args.add_jitter)
+        model = sgpvae.models.GPVAE(
+            encoder, decoder, args.latent_dim, kernel,
+            add_jitter=args.add_jitter)
         loss_fn = sgpvae.estimators.gpvae.ds_estimator
         elbo_estimator = sgpvae.estimators.gpvae.elbo_estimator
 
@@ -89,6 +111,24 @@ def main(args):
         model = sgpvae.models.VAE(encoder, decoder, args.latent_dim)
         loss_fn = sgpvae.estimators.vae.sa_estimator
         elbo_estimator = sgpvae.estimators.vae.elbo_estimator
+
+    elif args.model == 'gprnvae':
+        model = sgpvae.models.GPRNVAE(
+            encoder, decoder, args.f_dim, args.w_dim, f_kernel, w_kernel,
+            add_jitter=args.add_jitter)
+        loss_fn = sgpvae.estimators.gprnvae.sa_estimator
+        elbo_estimator = sgpvae.estimators.gprnvae.elbo_estimator
+
+    elif args.model == 'sgprnvae':
+        z_init = kmeans2(x.numpy(), args.num_inducing, minit='points')[0]
+        z_init = torch.tensor(z_init)
+
+        model = sgpvae.models.SGPRNVAE(
+            encoder, decoder, args.f_dim, args.w_dim, f_kernel, w_kernel,
+            z_init, add_jitter=args.add_jitter,
+            fixed_inducing=args.fixed_inducing)
+        loss_fn = sgpvae.estimators.sgprnvae.sa_estimator
+        elbo_estimator = sgpvae.estimators.sgprnvae.elbo_estimator
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
@@ -145,11 +185,17 @@ if __name__ == '__main__':
     # Kernel.
     parser.add_argument('--init_lengthscale', default=1., type=float)
     parser.add_argument('--init_scale', default=1., type=float)
+    parser.add_argument('--init_f_lengthscale', default=1., type=float)
+    parser.add_argument('--init_f_scale', default=1., type=float)
+    parser.add_argument('--init_w_lengthscale', default=1., type=float)
+    parser.add_argument('--init_w_scale', default=1., type=float)
 
     # GPVAE.
     parser.add_argument('--model', default='gpvae')
     parser.add_argument('--pinference_net', default='indexnet', type=str)
     parser.add_argument('--latent_dim', default=2, type=int)
+    parser.add_argument('--f_dim', default=2, type=int)
+    parser.add_argument('--w_dim', default=3, type=int)
     parser.add_argument('--decoder_dims', default=[20], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)
@@ -163,7 +209,7 @@ if __name__ == '__main__':
     parser.add_argument('--initial_sigma', default=.1, type=float)
 
     # Training.
-    parser.add_argument('--epochs', default=2000, type=int)
+    parser.add_argument('--epochs', default=3000, type=int)
     parser.add_argument('--cache_freq', default=100, type=int)
     parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
