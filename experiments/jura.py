@@ -91,7 +91,7 @@ def main(args):
 
     # Construct SGP-VAE model and choose loss function.
     if args.model == 'gpvae':
-        model = sgpvae.models.GPVAE(
+        model = sgpvae.gpvae.GPVAE(
             encoder, decoder, args.latent_dim, kernel,
             add_jitter=args.add_jitter)
         loss_fn = sgpvae.estimators.gpvae.ds_estimator
@@ -101,19 +101,19 @@ def main(args):
         z_init = kmeans2(x.numpy(), args.num_inducing, minit='points')[0]
         z_init = torch.tensor(z_init)
 
-        model = sgpvae.models.SGPVAE(
+        model = sgpvae.gpvae.SGPVAE(
             encoder, decoder, args.latent_dim, kernel, z_init,
             add_jitter=args.add_jitter, fixed_inducing=args.fixed_inducing)
         loss_fn = sgpvae.estimators.sgpvae.sa_estimator
         elbo_estimator = sgpvae.estimators.sgpvae.elbo_estimator
 
     elif args.model == 'vae':
-        model = sgpvae.models.VAE(encoder, decoder, args.latent_dim)
+        model = sgpvae.gpvae.VAE(encoder, decoder, args.latent_dim)
         loss_fn = sgpvae.estimators.vae.sa_estimator
         elbo_estimator = sgpvae.estimators.vae.elbo_estimator
 
     elif args.model == 'gprnvae':
-        model = sgpvae.models.GPRNVAE(
+        model = sgpvae.gpvae.GPRNVAE(
             encoder, decoder, args.f_dim, args.w_dim, f_kernel, w_kernel,
             add_jitter=args.add_jitter)
         loss_fn = sgpvae.estimators.gprnvae.sa_estimator
@@ -123,7 +123,7 @@ def main(args):
         z_init = kmeans2(x.numpy(), args.num_inducing, minit='points')[0]
         z_init = torch.tensor(z_init)
 
-        model = sgpvae.models.SGPRNVAE(
+        model = sgpvae.gpvae.SGPRNVAE(
             encoder, decoder, args.f_dim, args.w_dim, f_kernel, w_kernel,
             z_init, add_jitter=args.add_jitter,
             fixed_inducing=args.fixed_inducing)

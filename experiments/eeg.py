@@ -8,7 +8,9 @@ import torch
 import sys
 sys.path.append('../')
 import sgpvae
+
 from data.eeg import load
+from sgpvae.utils.misc import str2bool
 
 torch.set_default_dtype(torch.float64)
 
@@ -197,6 +199,7 @@ if __name__ == '__main__':
     parser.add_argument('--rho_dims', default=[20], nargs='+', type=int)
     parser.add_argument('--inter_dim', default=20, type=int)
     parser.add_argument('--num_inducing', default=64, type=int)
+    parser.add_argument('--fixed_inducing', default=False, type=str2bool)
     parser.add_argument('--add_jitter', default=True,
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--min_sigma', default=1e-3, type=float)
