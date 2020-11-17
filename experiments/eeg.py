@@ -10,7 +10,7 @@ sys.path.append('../')
 import sgpvae
 
 from data.eeg import load
-from sgpvae.utils.misc import str2bool
+from sgpvae.utils.misc import str2bool, save
 
 torch.set_default_dtype(torch.float64)
 
@@ -175,9 +175,14 @@ def main(args):
     print('MLL: {:.3f}'.format(mll))
     print('ELBO: {:.3f}'.format(elbo))
 
+    if args.save:
+        metrics = {'ELBO': elbo, 'SMSE': smse, 'MLL': mll}
+        save(vars(args), metrics)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+
     # Kernel.
     parser.add_argument('--init_lengthscale', default=0.05, type=float)
     parser.add_argument('--init_scale', default=1., type=float)
@@ -210,6 +215,10 @@ if __name__ == '__main__':
     parser.add_argument('--cache_freq', default=100, type=int)
     parser.add_argument('--batch_size', default=256, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
+
+    # General.
+    parser.add_argument('--save', default=False, type=str2bool)
+    parser.add_argument('--results_dir', default='./_results/eeg/', type=str)
 
     args = parser.parse_args()
     main(args)
