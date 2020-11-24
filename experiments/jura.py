@@ -37,30 +37,38 @@ def main(args):
         dataset, batch_size=args.batch_size, shuffle=True)
 
     # Model construction.
-    if args.model in ['gpvae', 'sgpvae', 'vae']:
-        kernel = sgpvae.kernels.RBFKernel(
-            lengthscale=args.init_lengthscale, scale=args.init_scale)
+
+    # GP prior kernel.
+    kernel = sgpvae.kernels.RBFKernel(
+        lengthscale=args.init_lengthscale, scale=args.init_scale)
+
+    # Likelihood function.
+    if args.likelihood == 'gprn':
+        print('Using GPRN likelihood function.')
+        likelihood = sgpvae.likelihoods.GPRNHomoGaussian(
+            f_dim=args.f_dim, out_dim=y.shape[1], sigma=args.sigma)
+        latent_dim = args.f_dim + args.f_dim * y.shape[1]
+
+    elif args.likelihood == 'gprn-nn':
+        print('Using GPRN-NN likelihood function.')
+        likelihood = sgpvae.likelihoods.GPRNNNHomoGaussian(
+            f_dim=args.f_dim, w_dim=args.w_dim, out_dim=y.shape[1],
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+        latent_dim = args.f_dim + args.f_dim * args.w_dim
+
+    elif args.likelihood == 'linear':
+        print('Using linear likelihood function.')
+        likelihood = sgpvae.likelihoods.AffineHomoGaussian(
+            in_dim=args.latent_dim, out_dim=y.shape[1], sigma=args.sigma)
+
+    else:
+        print('Using NN likelihood function.')
         likelihood = sgpvae.likelihoods.NNHomoGaussian(
             in_dim=args.latent_dim, out_dim=y.shape[1],
             hidden_dims=args.decoder_dims, sigma=args.sigma)
-
         latent_dim = args.latent_dim
 
-    elif args.model in ['gprnvae', 'sgprnvae']:
-        f_kernel = sgpvae.kernels.RBFKernel(
-            lengthscale=args.init_f_lengthscale, scale=args.init_f_scale)
-        w_kernel = sgpvae.kernels.RBFKernel(
-            lengthscale=args.init_w_lengthscale, scale=args.init_w_scale)
-
-        likelihood = sgpvae.likelihoods.NNHomoGaussian(
-            in_dim=args.w_dim, out_dim=y.shape[1],
-            hidden_dims=args.decoder_dims, sigma=args.sigma)
-
-        latent_dim = args.f_dim + args.f_dim * args.w_dim
-
-    else:
-        raise ValueError('{} is not a model'.format(args.model))
-
+    # Approximate likelihood function.
     if args.pinference_net == 'factornet':
         variational_dist = sgpvae.likelihoods.FactorNet(
             in_dim=y.shape[1], out_dim=latent_dim,
@@ -90,7 +98,7 @@ def main(args):
         raise ValueError('{} is not a partial inference network.'.format(
             args.pinference_net))
 
-    # Construct SGP-VAE model and choose loss function.
+    # Construct SGP-VAE model.
     if args.model == 'gpvae':
         model = sgpvae.models.GPVAE(
             likelihood, variational_dist, latent_dim, kernel,
@@ -107,20 +115,6 @@ def main(args):
     elif args.model == 'vae':
         model = sgpvae.models.VAE(likelihood, variational_dist,
                                   args.latent_dim)
-
-    elif args.model == 'gprnvae':
-        model = sgpvae.models.GPRNVAE(
-            likelihood, variational_dist, args.f_dim, args.w_dim, f_kernel,
-            w_kernel, add_jitter=args.add_jitter)
-
-    elif args.model == 'sgprnvae':
-        z_init = torch.linspace(
-            0, x[-1].item(), steps=args.num_inducing).unsqueeze(1)
-
-        model = sgpvae.models.SGPRNVAE(
-            likelihood, variational_dist, args.f_dim, args.w_dim, f_kernel,
-            w_kernel, z_init, add_jitter=args.add_jitter,
-            fixed_inducing=args.fixed_inducing)
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
@@ -182,17 +176,14 @@ if __name__ == '__main__':
     # Kernel.
     parser.add_argument('--init_lengthscale', default=1., type=float)
     parser.add_argument('--init_scale', default=1., type=float)
-    parser.add_argument('--init_f_lengthscale', default=1., type=float)
-    parser.add_argument('--init_f_scale', default=1., type=float)
-    parser.add_argument('--init_w_lengthscale', default=1., type=float)
-    parser.add_argument('--init_w_scale', default=1., type=float)
 
     # GPVAE.
     parser.add_argument('--model', default='gpvae')
+    parser.add_argument('--likelihood', default='nn', type=str)
     parser.add_argument('--pinference_net', default='indexnet', type=str)
     parser.add_argument('--latent_dim', default=2, type=int)
     parser.add_argument('--f_dim', default=2, type=int)
-    parser.add_argument('--w_dim', default=3, type=int)
+    parser.add_argument('--w_dim', default=2, type=int)
     parser.add_argument('--decoder_dims', default=[20], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)

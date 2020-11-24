@@ -52,6 +52,13 @@ def main(args):
             hidden_dims=args.decoder_dims, sigma=args.sigma)
         latent_dim = args.f_dim + args.f_dim * args.w_dim
 
+    elif args.likelihood == 'nn-gprn':
+        print('Using NN-GPRN likelihood function.')
+        likelihood = sgpvae.likelihoods.NNGPRNHomoGaussian(
+            f_dim=args.f_dim, w_dim=args.w_dim, out_dim=y.shape[1],
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+        latent_dim = args.f_dim + args.w_dim * y.shape[1]
+
     elif args.likelihood == 'linear':
         print('Using linear likelihood function.')
         likelihood = sgpvae.likelihoods.AffineHomoGaussian(
