@@ -26,6 +26,8 @@ def save(args, metrics):
         while os.path.isdir(results_dir + '_' + str(i)):
             i += 1
 
+        results_dir += '_' + str(i)
+
     os.makedirs(results_dir, exist_ok=True)
 
     # Pickle args and metrics.
