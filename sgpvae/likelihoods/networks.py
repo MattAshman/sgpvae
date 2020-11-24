@@ -4,8 +4,6 @@ from torch.nn import functional as F
 
 __all__ = ['LinearNN']
 
-JITTER = 1e-5
-
 
 class LinearNN(nn.Module):
     """A fully connected neural network.

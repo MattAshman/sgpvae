@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.distributions import Bernoulli
-from ..networks import LinearNN
+from .networks import LinearNN
 from .base import Likelihood
 
 __all__ = ['Bernoulli', 'NNBernoulli']

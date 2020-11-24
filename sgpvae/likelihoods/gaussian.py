@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from torch.distributions import Normal
-from ..networks import LinearNN
+from .networks import LinearNN
 from .base import Likelihood
 
 __all__ = ['HomoGaussian', 'AffineHomoGaussian', 'NNHomoGaussian',
@@ -77,6 +77,7 @@ class AffineHomoGaussian(Likelihood):
 class NNHomoGaussian(Likelihood):
     """A fully connected neural network for parameterising a diagonal
     Gaussian distribution with homoscedastic noise.
+
     :param in_dim (int): dimension of the input variable.
     :param out_dim (int): dimension of the output variable.
     :param hidden_dims (list, optional): dimensions of hidden layers.

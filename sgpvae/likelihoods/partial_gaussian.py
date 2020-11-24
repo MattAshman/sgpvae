@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.distributions import Normal
 from .base import Likelihood
 from .gaussian import NNHeteroGaussian
-from ..networks import LinearNN
+from .networks import LinearNN
 
 __all__ = ['IndexNet', 'FactorNet', 'PointNet']
 

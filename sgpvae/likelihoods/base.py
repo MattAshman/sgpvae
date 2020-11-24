@@ -15,6 +15,3 @@ class Likelihood(nn.Module):
         px = self(z)
 
         return px.log_prob(x)
-
-
-

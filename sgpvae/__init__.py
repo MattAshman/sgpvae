@@ -1,4 +1,3 @@
-from . import estimators, kernels, networks, utils, models, likelihoods
+from . import kernels, utils, models, likelihoods
 
-__all__ = ['estimators', 'kernels', 'networks', 'utils', 'models',
-           'likelihoods']
+__all__ = ['likelihoods', 'kernels', 'models', 'utils']
