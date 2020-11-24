@@ -136,29 +136,29 @@ def main(args):
     # Model construction.
     kernel = sgpvae.kernels.RBFKernel(
         lengthscale=args.init_lengthscale, scale=args.init_scale)
-    decoder = sgpvae.networks.LinearGaussian(
+    likelihood = sgpvae.likelihoods.NNHomoGaussian(
         in_dim=args.latent_dim, out_dim=len(observations),
         hidden_dims=args.decoder_dims, sigma=args.sigma)
 
     if args.pinference_net == 'factornet':
-        encoder = sgpvae.networks.FactorNet(
+        variational_dist = sgpvae.likelihoods.FactorNet(
             in_dim=len(observations), out_dim=args.latent_dim,
-            h_dims=args.h_dims, min_sigma=args.min_sigma, initial_sigma=.1)
+            h_dims=args.h_dims, min_sigma=args.min_sigma)
 
     elif args.pinference_net == 'indexnet':
-        encoder = sgpvae.networks.IndexNet(
+        variational_dist = sgpvae.likelihoods.IndexNet(
             in_dim=len(observations), out_dim=args.latent_dim,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
             rho_dims=args.rho_dims, min_sigma=args.min_sigma)
 
     elif args.pinference_net == 'pointnet':
-        encoder = sgpvae.networks.PointNet(
+        variational_dist = sgpvae.likelihoods.PointNet(
             out_dim=args.latent_dim, inter_dim=args.inter_dim,
             h_dims=args.h_dims, rho_dims=args.rho_dims,
             min_sigma=args.min_sigma)
 
     elif args.pinference_net == 'zeroimputation':
-        encoder = sgpvae.networks.LinearGaussian(
+        variational_dist = sgpvae.likelihoods.NNHeteroGaussian(
             in_dim=len(observations), out_dim=args.latent_dim,
             hidden_dims=args.h_dims, min_sigma=args.min_sigma)
 
@@ -168,26 +168,22 @@ def main(args):
 
     # Construct SGP-VAE model and choose loss function.
     if args.model == 'gpvae':
-        model = sgpvae.gpvae.GPVAE(encoder, decoder, args.latent_dim,
-                                   kernel, add_jitter=args.add_jitter)
-        loss_fn = sgpvae.estimators.gpvae.ds_estimator
-        elbo_estimator = sgpvae.estimators.gpvae.elbo_estimator
+        model = sgpvae.models.GPVAE(
+            likelihood, variational_dist, args.latent_dim, kernel,
+            add_jitter=args.add_jitter)
 
     elif args.model == 'sgpvae':
         z_init = kmeans2(data['x_train'][0].numpy(), k=args.num_inducing,
                          minit='points')[0]
         z_init = torch.tensor(z_init)
 
-        model = sgpvae.gpvae.SGPVAE(
-            encoder, decoder, args.latent_dim, kernel, z_init,
+        model = sgpvae.models.SGPVAE(
+            likelihood, variational_dist, args.latent_dim, kernel, z_init,
             add_jitter=args.add_jitter, fixed_inducing=args.fixed_inducing)
-        loss_fn = sgpvae.estimators.sgpvae.sa_estimator
-        elbo_estimator = sgpvae.estimators.sgpvae.elbo_estimator
 
     elif args.model == 'vae':
-        model = sgpvae.gpvae.VAE(encoder, decoder, args.latent_dim)
-        loss_fn = sgpvae.estimators.vae.sa_estimator
-        elbo_estimator = sgpvae.estimators.vae.elbo_estimator
+        model = sgpvae.models.VAE(
+            likelihood, variational_dist,  args.latent_dim)
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
@@ -207,7 +203,7 @@ def main(args):
             m_b = m_b.squeeze(0)
 
             optimiser.zero_grad()
-            loss = loss_fn(model, x=x_b, y=y_b, mask=m_b, num_samples=1)
+            loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
             loss.backward()
             optimiser.step()
 
@@ -245,7 +241,7 @@ def main(args):
         y_b = y_b.squeeze(0)
         m_b = m_b.squeeze(0)
 
-        elbo += elbo_estimator(model, x_b, y_b, m_b, num_samples=10)
+        elbo += model.elbo(x_b, y_b, m_b, num_samples=10)
 
     pred_1980, var_1980 = predict(
         model, train_1980_dataset, data['test_1980'], observations,

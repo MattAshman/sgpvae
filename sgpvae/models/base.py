@@ -1,71 +1,73 @@
 import torch
 import torch.nn as nn
 
+from torch.distributions import Normal, kl_divergence
+
 __all__ = ['VAE']
 
 
 class VAE(nn.Module):
     """VAE with standard normal prior.
 
-    :param encoder: encoder network.
-    :param decoder: decoder network.
+    :param likelihood: likelihood function, p(x|f).
+    :param variational_dist: variational distribution, q(f|x).
     :param latent_dim (int): latent space dimensionality.
     """
-    def __init__(self, encoder, decoder, latent_dim):
+    def __init__(self, likelihood, variational_dist, latent_dim):
         super().__init__()
 
-        self.encoder = encoder
-        self.decoder = decoder
+        self.likelihood = likelihood
+        self.variational_dist = variational_dist
         self.latent_dim = latent_dim
 
-    def latent_prior(self, x):
-        """Return latent prior mean and covariance."""
-        pf_mu = torch.zeros(self.latent_dim, x.shape[0])
-        pf_cov = torch.ones(self.latent_dim, x.shape[0]).diag_embed()
+    def pf(self):
+        """Return latent prior."""
+        pf_mu = torch.zeros(self.latent_dim)
+        pf_sigma = torch.ones(self.latent_dim)
+        pf = Normal(pf_mu, pf_sigma)
 
-        return pf_mu, pf_cov
+        return pf
 
-    def latent_dists(self, x, y, mask=None):
-        """Return latent posterior and prior mean and covariance."""
-        if mask is not None:
-            qf_mu, qf_sigma = self.encoder(y, mask)
-        else:
-            qf_mu, qf_sigma = self.encoder(y)
+    def qf(self, y, mask=None):
+        """Return latent approximate posterior."""
+        qf = self.variational_dist(y, mask)
 
-        # Reshape.
-        qf_mu = qf_mu.transpose(0, 1)
-        qf_sigma = qf_sigma.transpose(0, 1)
-        qf_cov = qf_sigma.pow(2).diag_embed()
+        return qf
 
-        # Prior.
-        pf_mu, pf_cov = self.latent_prior(x)
+    def elbo(self, y, mask=None, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        pf = self.pf()
+        qf = self.qf(y, mask)
 
-        return qf_mu, qf_cov, pf_mu, pf_cov
+        # KL(q(f) || p(f) term.
+        kl = kl_divergence(qf, pf).sum()
 
-    def sample_posterior(self, x, y=None, mask=None, num_samples=1, **kwargs):
-        """Sample latent posterior."""
-        if y is not None:
-            qf_mu, qf_cov = self.latent_dists(x, y, mask)[:2]
-        else:
-            qf_mu, qf_cov = self.latent_prior(x)
+        # log p(y|f) term.
+        f_samples = qf.rsample((num_samples,))
+        log_py_f = 0
+        for f in f_samples:
+            log_py_f += (self.likelihood.log_prob(f, y) * mask).sum()
 
-        qf_sigma = torch.stack([cov.diag() for cov in qf_cov]) ** 0.5
-        samples = [qf_mu + qf_sigma * torch.randn_like(qf_mu)
-                   for _ in range(num_samples)]
+        log_py_f /= num_samples
+        elbo = log_py_f - kl
 
-        return samples
+        return elbo / y.shape[0]
 
-    def predict_y(self, **kwargs):
+    def predict_y(self, y=None, num_samples=1):
         """Sample predictive posterior."""
-        f_samples = self.sample_posterior(**kwargs)
+        if y is None:
+            qf = self.pf()
+        else:
+            qf = self.qf(y)
+
+        f_samples = qf.sample((num_samples,))
 
         y_mus, y_sigmas, y_samples = [], [], []
         for f in f_samples:
             # Output conditional posterior distribution.
-            y_mu, y_sigma = self.decoder(f.transpose(0, 1))
-            y_mus.append(y_mu)
-            y_sigmas.append(y_sigma)
-            y_samples.append(y_mu + y_sigma * torch.randn_like(y_mu))
+            py_f = self.likelihood(f)
+            y_mus.append(py_f.mean)
+            y_samples.append(py_f.sample())
 
         y_mu = torch.stack(y_mus).mean(0).detach()
         y_sigma = torch.stack(y_samples).std(0).detach()

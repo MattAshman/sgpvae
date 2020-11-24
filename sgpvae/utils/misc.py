@@ -2,7 +2,7 @@ import argparse
 import os
 import pickle
 
-__all__ = ['str2bool']
+__all__ = ['str2bool', 'save']
 
 def str2bool(v):
     if isinstance(v, bool):

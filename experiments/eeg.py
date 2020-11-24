@@ -36,10 +36,9 @@ def main(args):
     if args.model in ['gpvae', 'sgpvae', 'vae']:
         kernel = sgpvae.kernels.RBFKernel(
             lengthscale=args.init_lengthscale, scale=args.init_scale)
-        decoder = sgpvae.networks.LinearGaussian(
+        likelihood = sgpvae.likelihoods.NNHomoGaussian(
             in_dim=args.latent_dim, out_dim=y.shape[1],
             hidden_dims=args.decoder_dims, sigma=args.sigma)
-
         latent_dim = args.latent_dim
 
     elif args.model in ['gprnvae', 'sgprnvae']:
@@ -48,7 +47,7 @@ def main(args):
         w_kernel = sgpvae.kernels.RBFKernel(
             lengthscale=args.init_w_lengthscale, scale=args.init_w_scale)
 
-        decoder = sgpvae.networks.LinearGaussian(
+        likelihood = sgpvae.likelihoods.NNHomoGaussian(
             in_dim=args.w_dim, out_dim=y.shape[1],
             hidden_dims=args.decoder_dims, sigma=args.sigma)
 
@@ -58,29 +57,29 @@ def main(args):
         raise ValueError('{} is not a model'.format(args.model))
 
     if args.pinference_net == 'factornet':
-        encoder = sgpvae.networks.FactorNet(
+        variational_dist = sgpvae.likelihoods.FactorNet(
             in_dim=y.shape[1], out_dim=latent_dim,
             h_dims=args.h_dims, min_sigma=args.min_sigma,
-            initial_sigma=args.initial_sigma)
+            init_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'indexnet':
-        encoder = sgpvae.networks.IndexNet(
+        variational_dist = sgpvae.likelihoods.IndexNet(
             in_dim=y.shape[1], out_dim=latent_dim,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
             rho_dims=args.rho_dims, min_sigma=args.min_sigma,
-            initial_sigma=args.initial_sigma)
+            init_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'pointnet':
-        encoder = sgpvae.networks.PointNet(
+        variational_dist = sgpvae.likelihoods.PointNet(
             out_dim=latent_dim, inter_dim=args.inter_dim,
             h_dims=args.h_dims, rho_dims=args.rho_dims,
             min_sigma=args.min_sigma, initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'zeroimputation':
-        encoder = sgpvae.networks.LinearGaussian(
+        variational_dist = sgpvae.likelihoods.NNHeteroGaussian(
             in_dim=y.shape[1], out_dim=latent_dim,
             hidden_dims=args.h_dims, min_sigma=args.min_sigma,
-            initial_sigma=args.initial_sigma)
+            init_sigma=args.initial_sigma)
 
     else:
         raise ValueError('{} is not a partial inference network.'.format(
@@ -89,42 +88,33 @@ def main(args):
     # Construct SGP-VAE model and choose loss function.
     if args.model == 'gpvae':
         model = sgpvae.models.GPVAE(
-            encoder, decoder, latent_dim, kernel, add_jitter=args.add_jitter)
-        loss_fn = sgpvae.estimators.gpvae.sa_estimator
-        elbo_estimator = sgpvae.estimators.gpvae.elbo_estimator
+            likelihood, variational_dist, latent_dim, kernel,
+            add_jitter=args.add_jitter)
 
     elif args.model == 'sgpvae':
         z_init = torch.linspace(
             0, x[-1].item(), steps=args.num_inducing).unsqueeze(1)
 
         model = sgpvae.models.SGPVAE(
-            encoder, decoder, args.latent_dim, kernel, z_init,
+            likelihood, variational_dist, args.latent_dim, kernel, z_init,
             add_jitter=args.add_jitter, fixed_inducing=args.fixed_inducing)
-        loss_fn = sgpvae.estimators.sgpvae.sa_estimator
-        elbo_estimator = sgpvae.estimators.sgpvae.elbo_estimator
 
     elif args.model == 'vae':
-        model = sgpvae.models.VAE(encoder, decoder, args.latent_dim)
-        loss_fn = sgpvae.estimators.vae.sa_estimator
-        elbo_estimator = sgpvae.estimators.vae.elbo_estimator
+        model = sgpvae.models.VAE(likelihood, variational_dist, args.latent_dim)
 
     elif args.model == 'gprnvae':
         model = sgpvae.models.GPRNVAE(
-            encoder, decoder, args.f_dim, args.w_dim, f_kernel, w_kernel,
-            add_jitter=args.add_jitter)
-        loss_fn = sgpvae.estimators.gprnvae.sa_estimator
-        elbo_estimator = sgpvae.estimators.gprnvae.elbo_estimator
+            likelihood, variational_dist, args.f_dim, args.w_dim, f_kernel,
+            w_kernel, add_jitter=args.add_jitter)
 
     elif args.model == 'sgprnvae':
         z_init = torch.linspace(
             0, x[-1].item(), steps=args.num_inducing).unsqueeze(1)
 
         model = sgpvae.models.SGPRNVAE(
-            encoder, decoder, args.f_dim, args.w_dim, f_kernel, w_kernel,
-            z_init, add_jitter=args.add_jitter,
+            likelihood, variational_dist, args.f_dim, args.w_dim, f_kernel,
+            w_kernel, z_init, add_jitter=args.add_jitter,
             fixed_inducing=args.fixed_inducing)
-        loss_fn = sgpvae.estimators.sgprnvae.sa_estimator
-        elbo_estimator = sgpvae.estimators.sgprnvae.elbo_estimator
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
@@ -140,7 +130,7 @@ def main(args):
             x_b, y_b, m_b, idx_b = batch
 
             optimiser.zero_grad()
-            loss = loss_fn(model, x=x_b, y=y_b, mask=m_b, num_samples=1)
+            loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
             loss.backward()
             optimiser.step()
 
@@ -149,15 +139,16 @@ def main(args):
         epoch_iter.set_postfix(loss=np.mean(losses))
 
         if epoch % args.cache_freq == 0:
-            elbo = elbo_estimator(model, dataset.x, dataset.y, dataset.m,
-                                  num_samples=100)
+            elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
+            elbo *= dataset.x.shape[0]
+
             tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
 
     # Evaluate model performance.
-    elbo = elbo_estimator(model, dataset.x, dataset.y, dataset.m,
-                          num_samples=100)
+    elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
+    elbo *= dataset.x.shape[0]
     mean, sigma = model.predict_y(
-        x=x, y=y, mask=dataset.m, num_samples=100)[:2]
+        x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
 
     mean, sigma = mean.numpy(), sigma.numpy()
     mean = mean * y_std + y_mean
