@@ -1,3 +1,3 @@
-from . import dataset, matrix, metric, misc
+from . import dataset, matrix, metric, misc, training
 
-__all__ = ['dataset', 'matrix', 'metric', 'misc']
+__all__ = ['dataset', 'matrix', 'metric', 'misc', 'training']

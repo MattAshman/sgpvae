@@ -118,10 +118,14 @@ class GPVAE(VAE):
 
             return qf
 
-    def elbo(self, x, y, mask=None, num_samples=1):
+    def elbo(self, x, y, mask=None, mask_q=None, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
+        # Use y_q and mask_q to obtain approximate likelihoods.
+        if mask_q is None:
+            mask_q = mask
+
         pf = self.pf(x)
-        lf = self.lf(y, mask)
+        lf = self.lf(y, mask_q)
         qf = self.qf(pf=pf, lf=lf)
 
         # KL(q(f) || p(f)) term.
@@ -132,6 +136,7 @@ class GPVAE(VAE):
             [cov.diag().pow(0.5) for cov in qf.covariance_matrix])
         qf_marginals = Normal(qf.mean, qf_sigma)
         f_samples = qf_marginals.rsample((num_samples,))
+
         log_py_f = 0
         for f in f_samples:
             log_py_f += (self.likelihood.log_prob(f.T, y) * mask).sum()

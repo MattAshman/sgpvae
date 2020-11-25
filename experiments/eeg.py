@@ -132,6 +132,7 @@ def main(args):
             x_b, y_b, m_b, idx_b = batch
 
             optimiser.zero_grad()
+            # loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
             loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
             loss.backward()
             optimiser.step()
