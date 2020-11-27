@@ -220,7 +220,12 @@ class SGPVAE(GPVAE):
         # B = I + A * \Sigma_{\phi}^{-1} * A^T.
         b = a.matmul(lf_precision).matmul(a.transpose(-1, -2))
         b = add_diagonal(b, 1)
-        b_chol = torch.cholesky(b)
+        try:
+            b_chol = torch.cholesky(b)
+        except:
+            import pdb
+            pdb.set_trace()
+            print('wtf')
 
         # c = Lb^{-1} * Lu^{-1} * Kuf * \Sigma_{\phi}^{-1} * \mu_{\phi}
         c = a.matmul(lf_precision).matmul(lf_mu.unsqueeze(2))
@@ -240,7 +245,7 @@ class SGPVAE(GPVAE):
             kus = ksu.transpose(-1, -2)
 
             # e = Lu^{-1} * Kus.
-            e = torch.triangular_solve(pu_chol, kus, upper=False)[0]
+            e = torch.triangular_solve(kus, pu_chol, upper=False)[0]
 
             # g = Lb^{-1} * e
             g = torch.triangular_solve(e, b_chol, upper=False)[0]
@@ -250,7 +255,7 @@ class SGPVAE(GPVAE):
                       + g.transpose(-1, -2).matmul(g))
             qs = MultivariateNormal(qs_mu, qs_cov)
 
-            return qs
+            return qs, None
 
         else:
             pf = self.pf(x, diag)

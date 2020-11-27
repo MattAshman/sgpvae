@@ -51,23 +51,31 @@ class GPRNNNHomoGaussian(Likelihood):
     :param sigma_grad (bool, optional): whether to train the homoscedastic
     output sigma.
     :param min_sigma (float, optional): sets the minimum output sigma.
+    :param w_transform (function, optional): transform to apply to the GPRN
+    weights.
     :param nonlinearity (function, optional): non-linearity to apply in
-    between layeres.
+    between layers.
     """
 
     def __init__(self, f_dim, w_dim, out_dim, hidden_dims=(64, 64),
-                 sigma=None, sigma_grad=True, min_sigma=1e-3,
+                 sigma=None, sigma_grad=True, min_sigma=1e-3, w_transform=None,
                  nonlinearity=F.relu):
         super().__init__()
 
         self.f_dim = f_dim
         self.w_dim = w_dim
+        self.w_transform = w_transform
         self.network = LinearNN(w_dim, out_dim, hidden_dims, nonlinearity)
         self.likelihood = HomoGaussian(out_dim, sigma, sigma_grad, min_sigma)
 
     def forward(self, z):
         f, w = z[:, :self.f_dim], z[:, self.f_dim:]
         w = w.reshape(-1, self.w_dim, self.f_dim)
+
+        # Transform weights of GPRN if applicable.
+        if self.w_transform is not None:
+            w = self.w_transform(w)
+        
         mu = self.network(w.matmul(f.unsqueeze(-1)).squeeze(-1))
 
         return self.likelihood(mu)

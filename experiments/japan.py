@@ -10,7 +10,9 @@ from scipy.cluster.vq import kmeans2
 import sys
 sys.path.append('../')
 import sgpvae
+
 from data.japan import load
+from sgpvae.utils.misc import str2bool, save
 
 torch.set_default_dtype(torch.float64)
 
@@ -95,12 +97,20 @@ def predict(model, dataset, test, observations, y_mean, y_std):
 
     for x_b, y_b, m_b, df_b in test_iter:
         x_b = x_b.squeeze(0)
+        x_test = x_b.clone()
         y_b = y_b.squeeze(0)
         m_b = m_b.squeeze(0)
 
+        # Find rows where some observations are present.
+        valid_idx = torch.where(m_b.sum(1) > 0)[0]
+        x_b = x_b[valid_idx]
+        y_b = y_b[valid_idx]
+        m_b = m_b[valid_idx]
+        # idx_b = df_b.index[valid_idx]
+
         # Test predictions.
         mean, sigma = model.predict_y(
-            x=x_b, y=y_b, mask=m_b, num_samples=10)[:2]
+            x=x_b, y=y_b, mask=m_b, x_test=x_test, num_samples=10)[:2]
 
         mean = mean.numpy() * y_std + y_mean
         sigma = sigma.numpy() * y_std
@@ -136,40 +146,72 @@ def main(args):
     # Model construction.
     kernel = sgpvae.kernels.RBFKernel(
         lengthscale=args.init_lengthscale, scale=args.init_scale)
-    likelihood = sgpvae.likelihoods.NNHomoGaussian(
-        in_dim=args.latent_dim, out_dim=len(observations),
-        hidden_dims=args.decoder_dims, sigma=args.sigma)
 
+    # Likelihood function.
+    if args.likelihood == 'gprn':
+        print('Using GPRN likelihood function.')
+        likelihood = sgpvae.likelihoods.GPRNHomoGaussian(
+            f_dim=args.f_dim, out_dim=len(observations), sigma=args.sigma)
+        latent_dim = args.f_dim + args.f_dim * len(observations)
+
+    elif args.likelihood == 'gprn-nn':
+        print('Using GPRN-NN likelihood function.')
+        likelihood = sgpvae.likelihoods.GPRNNNHomoGaussian(
+            f_dim=args.f_dim, w_dim=args.w_dim, out_dim=len(observations),
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+        latent_dim = args.f_dim + args.f_dim * args.w_dim
+
+    elif args.likelihood == 'nn-gprn':
+        print('Using NN-GPRN likelihood function.')
+        likelihood = sgpvae.likelihoods.NNGPRNHomoGaussian(
+            f_dim=args.f_dim, w_dim=args.w_dim, out_dim=len(observations),
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+        latent_dim = args.f_dim + args.w_dim * len(observations)
+
+    elif args.likelihood == 'linear':
+        print('Using linear likelihood function.')
+        likelihood = sgpvae.likelihoods.AffineHomoGaussian(
+            in_dim=args.latent_dim, out_dim=len(observations), sigma=args.sigma)
+        latent_dim = args.latent_dim
+
+    else:
+        print('Using NN likelihood function.')
+        likelihood = sgpvae.likelihoods.NNHomoGaussian(
+            in_dim=args.latent_dim, out_dim=len(observations),
+            hidden_dims=args.decoder_dims, sigma=args.sigma)
+        latent_dim = args.latent_dim
+
+    # Approximate likelihood function.
     if args.pinference_net == 'factornet':
         variational_dist = sgpvae.likelihoods.FactorNet(
-            in_dim=len(observations), out_dim=args.latent_dim,
+            in_dim=len(observations), out_dim=latent_dim,
             h_dims=args.h_dims, min_sigma=args.min_sigma)
 
     elif args.pinference_net == 'indexnet':
         variational_dist = sgpvae.likelihoods.IndexNet(
-            in_dim=len(observations), out_dim=args.latent_dim,
+            in_dim=len(observations), out_dim=latent_dim,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
             rho_dims=args.rho_dims, min_sigma=args.min_sigma)
 
     elif args.pinference_net == 'pointnet':
         variational_dist = sgpvae.likelihoods.PointNet(
-            out_dim=args.latent_dim, inter_dim=args.inter_dim,
+            out_dim=latent_dim, inter_dim=args.inter_dim,
             h_dims=args.h_dims, rho_dims=args.rho_dims,
             min_sigma=args.min_sigma)
 
     elif args.pinference_net == 'zeroimputation':
         variational_dist = sgpvae.likelihoods.NNHeteroGaussian(
-            in_dim=len(observations), out_dim=args.latent_dim,
+            in_dim=len(observations), out_dim=latent_dim,
             hidden_dims=args.h_dims, min_sigma=args.min_sigma)
 
     else:
         raise ValueError('{} is not a partial inference network.'.format(
             args.pinference_net))
 
-    # Construct SGP-VAE model and choose loss function.
+    # Construct SGP-VAE model.
     if args.model == 'gpvae':
         model = sgpvae.models.GPVAE(
-            likelihood, variational_dist, args.latent_dim, kernel,
+            likelihood, variational_dist, latent_dim, kernel,
             add_jitter=args.add_jitter)
 
     elif args.model == 'sgpvae':
@@ -178,12 +220,11 @@ def main(args):
         z_init = torch.tensor(z_init)
 
         model = sgpvae.models.SGPVAE(
-            likelihood, variational_dist, args.latent_dim, kernel, z_init,
+            likelihood, variational_dist, latent_dim, kernel, z_init,
             add_jitter=args.add_jitter, fixed_inducing=args.fixed_inducing)
 
     elif args.model == 'vae':
-        model = sgpvae.models.VAE(
-            likelihood, variational_dist,  args.latent_dim)
+        model = sgpvae.models.VAE(likelihood, variational_dist, latent_dim)
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
@@ -212,52 +253,54 @@ def main(args):
         epoch_iter.set_postfix(loss=np.mean(losses))
 
         if epoch % args.cache_freq == 0:
-            pred_1980, var_1980 = predict(
-                model, train_1980_dataset, data['test_1980'], observations,
-                data['y_mean'], data['y_std'])
-            rmse_1980 = sgpvae.utils.metric.rmse(
-                pred_1980, pd.concat(data['test_1980']))
-            mll_1980 = sgpvae.utils.metric.mll(
-                pred_1980, var_1980, pd.concat(data['test_1980']))
+            with torch.no_grad():
+                pred_1980, var_1980 = predict(
+                    model, train_1980_dataset, data['test_1980'], observations,
+                    data['y_mean'], data['y_std'])
+                rmse_1980 = sgpvae.utils.metric.rmse(
+                    pred_1980, pd.concat(data['test_1980']))
+                mll_1980 = sgpvae.utils.metric.mll(
+                    pred_1980, var_1980, pd.concat(data['test_1980']))
 
-            pred_1981, var_1981 = predict(
-                model, train_1981_dataset, data['test_1981'], observations,
-                data['y_mean'], data['y_std'])
-            rmse_1981 = sgpvae.utils.metric.rmse(
-                pred_1981, pd.concat(data['test_1981']))
-            mll_1981 = sgpvae.utils.metric.mll(
-                pred_1981, var_1981, pd.concat(data['test_1981']))
+                pred_1981, var_1981 = predict(
+                    model, train_1981_dataset, data['test_1981'], observations,
+                    data['y_mean'], data['y_std'])
+                rmse_1981 = sgpvae.utils.metric.rmse(
+                    pred_1981, pd.concat(data['test_1981']))
+                mll_1981 = sgpvae.utils.metric.mll(
+                    pred_1981, var_1981, pd.concat(data['test_1981']))
 
-            tqdm.tqdm.write('\nRMSE 1980: {:.3f}'.format(rmse_1980.mean()))
-            tqdm.tqdm.write('MLL 1980: {:.3f}'.format(mll_1980.mean()))
-            tqdm.tqdm.write('\nRMSE 1981: {:.3f}'.format(rmse_1981.mean()))
-            tqdm.tqdm.write('MLL 1981: {:.3f}'.format(mll_1981.mean()))
+            tqdm.tqdm.write('\nRMSE 1980: {:.3f}'.format(rmse_1980['TAVG']))
+            tqdm.tqdm.write('MLL 1980: {:.3f}'.format(mll_1980['TAVG']))
+            tqdm.tqdm.write('\nRMSE 1981: {:.3f}'.format(rmse_1981['TAVG']))
+            tqdm.tqdm.write('MLL 1981: {:.3f}'.format(mll_1981['TAVG']))
 
     # Evaluate model performance.
-    elbo = 0
-    for (x_b, y_b, m_b, idx_b) in loader:
-        # Get rid of 3rd-dimension.
-        x_b = x_b.squeeze(0)
-        y_b = y_b.squeeze(0)
-        m_b = m_b.squeeze(0)
+    with torch.no_grad():
+        elbo = 0
+        for (x_b, y_b, m_b, idx_b) in loader:
+            # Get rid of 3rd-dimension.
+            x_b = x_b.squeeze(0)
+            y_b = y_b.squeeze(0)
+            m_b = m_b.squeeze(0)
 
-        elbo += model.elbo(x_b, y_b, m_b, num_samples=10)
+            elbo += model.elbo(x_b, y_b, m_b, num_samples=10)
 
-    pred_1980, var_1980 = predict(
-        model, train_1980_dataset, data['test_1980'], observations,
-        data['y_mean'], data['y_std'])
-    rmse_1980 = sgpvae.utils.metric.rmse(
-        pred_1980, pd.concat(data['test_1980']))
-    mll_1980 = sgpvae.utils.metric.mll(
-        pred_1980, var_1980, pd.concat(data['test_1980']))
+        pred_1980, var_1980 = predict(
+            model, train_1980_dataset, data['test_1980'], observations,
+            data['y_mean'], data['y_std'])
+        rmse_1980 = sgpvae.utils.metric.rmse(
+            pred_1980, pd.concat(data['test_1980']))
+        mll_1980 = sgpvae.utils.metric.mll(
+            pred_1980, var_1980, pd.concat(data['test_1980']))
 
-    pred_1981, var_1981 = predict(
-        model, train_1981_dataset, data['test_1981'], observations,
-        data['y_mean'], data['y_std'])
-    rmse_1981 = sgpvae.utils.metric.rmse(
-        pred_1981, pd.concat(data['test_1980']))
-    mll_1981 = sgpvae.utils.metric.mll(
-        pred_1981, var_1981, pd.concat(data['test_1980']))
+        pred_1981, var_1981 = predict(
+            model, train_1981_dataset, data['test_1981'], observations,
+            data['y_mean'], data['y_std'])
+        rmse_1981 = sgpvae.utils.metric.rmse(
+            pred_1981, pd.concat(data['test_1980']))
+        mll_1981 = sgpvae.utils.metric.mll(
+            pred_1981, var_1981, pd.concat(data['test_1980']))
 
     print('\nELBO: {:.3f}'.format(elbo))
     print('\nRMSE 1980: {:.3f}'.format(rmse_1980))
@@ -265,17 +308,26 @@ def main(args):
     print('\nRMSE 1981: {:.3f}'.format(rmse_1981))
     print('MLL 1981: {:.3f}'.format(mll_1981))
 
+    if args.save:
+        metrics = {'ELBO': elbo, 'RMSE 1980': rmse_1980, 'mll_1980': mll_1980,
+                   'RMSE 1981': rmse_1981, 'mll_1981': mll_1981}
+        save(vars(args), metrics)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+
     # Kernel.
     parser.add_argument('--init_lengthscale', default=1., type=float)
     parser.add_argument('--init_scale', default=1., type=float)
 
     # GPVAE.
     parser.add_argument('--model', default='sgpvae')
+    parser.add_argument('--likelihood', default='nn', type=str)
     parser.add_argument('--pinference_net', default='indexnet', type=str)
     parser.add_argument('--latent_dim', default=3, type=int)
+    parser.add_argument('--f_dim', default=3, type=int)
+    parser.add_argument('--w_dim', default=3, type=int)
     parser.add_argument('--decoder_dims', default=[20, 20], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)
@@ -295,6 +347,11 @@ if __name__ == '__main__':
     parser.add_argument('--cache_freq', default=5, type=int)
     parser.add_argument('--batch_size', type=int)
     parser.add_argument('--lr', default=0.001, type=float)
+
+    # General.
+    parser.add_argument('--save', default=False, type=str2bool)
+    parser.add_argument('--results_dir', default='./_results/japan/',
+                        type=str)
 
     args = parser.parse_args()
     main(args)

@@ -116,7 +116,8 @@ def main(args):
             add_jitter=args.add_jitter, fixed_inducing=args.fixed_inducing)
 
     elif args.model == 'vae':
-        model = sgpvae.models.VAE(likelihood, variational_dist, args.latent_dim)
+        model = sgpvae.models.VAE(
+            likelihood, variational_dist, args.latent_dim)
 
     else:
         raise ValueError('{} is not a model.'.format(args.model))
@@ -132,7 +133,6 @@ def main(args):
             x_b, y_b, m_b, idx_b = batch
 
             optimiser.zero_grad()
-            # loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
             loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
             loss.backward()
             optimiser.step()
