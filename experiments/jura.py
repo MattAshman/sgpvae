@@ -12,6 +12,7 @@ sys.path.append('../')
 import sgpvae
 from data.jura import load
 from sgpvae.utils.misc import str2bool, save
+from sgpvae.utils.training import elbo_subset
 
 torch.set_default_dtype(torch.float64)
 
@@ -131,6 +132,7 @@ def main(args):
 
             optimiser.zero_grad()
             loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
+            # loss = -elbo_subset(model, x_b, y_b, m_b)
             loss.backward()
             optimiser.step()
 
@@ -142,7 +144,23 @@ def main(args):
             elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
             elbo *= dataset.x.shape[0]
 
-            tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
+            mean, sigma = model.predict_y(
+                x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
+
+            mean, sigma = mean.numpy(), sigma.numpy()
+            mean = mean * y_std + y_mean
+            sigma = sigma * y_std
+
+            pred = pd.DataFrame(mean, index=train.index,
+                                columns=train.columns)
+            var = pd.DataFrame(sigma ** 2, index=train.index,
+                               columns=train.columns)
+
+            mae = sgpvae.utils.metric.mae(pred, test).mean()
+            mll = sgpvae.utils.metric.mll(pred, var, test).mean()
+
+            tqdm.tqdm.write('\nELBO: {:.3f}\nMAE: {:.3f}\nMLL: {:.3f}'.format(
+                elbo, mae, mll))
 
     # Evaluate model performance.
     elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)

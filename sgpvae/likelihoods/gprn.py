@@ -22,16 +22,22 @@ class GPRNHomoGaussian(Likelihood):
     between layeres.
     """
     def __init__(self, f_dim, out_dim, sigma=None, sigma_grad=True,
-                 min_sigma=1e-3, nonlinearity=F.relu):
+                 min_sigma=1e-3, w_transform=None):
         super().__init__()
 
         self.f_dim = f_dim
         self.w_dim = out_dim
+        self.w_transform = w_transform
         self.likelihood = HomoGaussian(out_dim, sigma, sigma_grad, min_sigma)
 
     def forward(self, z):
         f, w = z[:, :self.f_dim], z[:, self.f_dim:]
         w = w.reshape(-1, self.w_dim, self.f_dim)
+
+        # Transform weights of GPRN if applicable.
+        if self.w_transform is not None:
+            w = self.w_transform(w)
+
         mu = w.matmul(f.unsqueeze(-1)).squeeze(-1)
 
         return self.likelihood(mu)

@@ -139,7 +139,10 @@ class GPVAE(VAE):
 
         log_py_f = 0
         for f in f_samples:
-            log_py_f += (self.likelihood.log_prob(f.T, y) * mask).sum()
+            if mask is not None:
+                log_py_f += (self.likelihood.log_prob(f.T, y) * mask).sum()
+            else:
+                log_py_f += self.likelihood.log_prob(f.T, y).sum()
 
         log_py_f /= num_samples
         elbo = log_py_f - kl
@@ -220,12 +223,7 @@ class SGPVAE(GPVAE):
         # B = I + A * \Sigma_{\phi}^{-1} * A^T.
         b = a.matmul(lf_precision).matmul(a.transpose(-1, -2))
         b = add_diagonal(b, 1)
-        try:
-            b_chol = torch.cholesky(b)
-        except:
-            import pdb
-            pdb.set_trace()
-            print('wtf')
+        b_chol = torch.cholesky(b)
 
         # c = Lb^{-1} * Lu^{-1} * Kuf * \Sigma_{\phi}^{-1} * \mu_{\phi}
         c = a.matmul(lf_precision).matmul(lf_mu.unsqueeze(2))
@@ -297,7 +295,10 @@ class SGPVAE(GPVAE):
         f_samples = qf_marginals.rsample((num_samples,))
         log_py_f = 0
         for f in f_samples:
-            log_py_f += (self.likelihood.log_prob(f.T, y) * mask).sum()
+            if mask is not None:
+                log_py_f += (self.likelihood.log_prob(f.T, y) * mask).sum()
+            else:
+                log_py_f += self.likelihood.log_prob(f.T, y).sum()
 
         log_py_f /= num_samples
         elbo = log_py_f - kl
