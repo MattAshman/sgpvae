@@ -147,18 +147,23 @@ def main(args):
     kernel = sgpvae.kernels.RBFKernel(
         lengthscale=args.init_lengthscale, scale=args.init_scale)
 
+    # Transform GPRN weights.
+    w_transform = torch.sigmoid if args.transform else None
+
     # Likelihood function.
     if args.likelihood == 'gprn':
         print('Using GPRN likelihood function.')
         likelihood = sgpvae.likelihoods.GPRNHomoGaussian(
-            f_dim=args.f_dim, out_dim=len(observations), sigma=args.sigma)
+            f_dim=args.f_dim, out_dim=len(observations), sigma=args.sigma,
+            w_transform=w_transform)
         latent_dim = args.f_dim + args.f_dim * len(observations)
 
     elif args.likelihood == 'gprn-nn':
         print('Using GPRN-NN likelihood function.')
         likelihood = sgpvae.likelihoods.GPRNNNHomoGaussian(
             f_dim=args.f_dim, w_dim=args.w_dim, out_dim=len(observations),
-            hidden_dims=args.decoder_dims, sigma=args.sigma)
+            hidden_dims=args.decoder_dims, sigma=args.sigma,
+            w_transform=w_transform)
         latent_dim = args.f_dim + args.f_dim * args.w_dim
 
     elif args.likelihood == 'nn-gprn':
@@ -341,6 +346,7 @@ if __name__ == '__main__':
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--min_sigma', default=1e-3, type=float)
     parser.add_argument('--initial_sigma', default=.1, type=float)
+    parser.add_argument('--transform', default=False, type=str2bool)
 
     # Training.
     parser.add_argument('--epochs', default=51, type=int)

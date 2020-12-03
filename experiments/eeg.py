@@ -11,6 +11,7 @@ import sgpvae
 
 from data.eeg import load
 from sgpvae.utils.misc import str2bool, save
+from sgpvae.utils.training import elbo_subset
 
 torch.set_default_dtype(torch.float64)
 
@@ -38,18 +39,23 @@ def main(args):
     kernel = sgpvae.kernels.RBFKernel(
         lengthscale=args.init_lengthscale, scale=args.init_scale)
 
+    # Transform GPRN weights.
+    w_transform = torch.sigmoid if args.transform else None
+
     # Likelihood function.
     if args.likelihood == 'gprn':
         print('Using GPRN likelihood function.')
         likelihood = sgpvae.likelihoods.GPRNHomoGaussian(
-            f_dim=args.f_dim, out_dim=y.shape[1], sigma=args.sigma)
+            f_dim=args.f_dim, out_dim=y.shape[1], sigma=args.sigma,
+            w_transform=w_transform)
         latent_dim = args.f_dim + args.f_dim * y.shape[1]
 
     elif args.likelihood == 'gprn-nn':
         print('Using GPRN-NN likelihood function.')
         likelihood = sgpvae.likelihoods.GPRNNNHomoGaussian(
             f_dim=args.f_dim, w_dim=args.w_dim, out_dim=y.shape[1],
-            hidden_dims=args.decoder_dims, sigma=args.sigma)
+            hidden_dims=args.decoder_dims, sigma=args.sigma,
+            w_transform=w_transform)
         latent_dim = args.f_dim + args.f_dim * args.w_dim
 
     elif args.likelihood == 'nn-gprn':
@@ -133,7 +139,11 @@ def main(args):
             x_b, y_b, m_b, idx_b = batch
 
             optimiser.zero_grad()
-            loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
+            if args.elbo_subset:
+                loss = -elbo_subset(model, x_b, y_b, m_b, num_samples=1)
+            else:
+                loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
+
             loss.backward()
             optimiser.step()
 
@@ -184,11 +194,11 @@ if __name__ == '__main__':
     # GPVAE.
     parser.add_argument('--model', default='gpvae')
     parser.add_argument('--likelihood', default='nn', type=str)
-    parser.add_argument('--pinference_net', default='indexnet', type=str)
+    parser.add_argument('--pinference_net', default='factornet', type=str)
     parser.add_argument('--latent_dim', default=3, type=int)
     parser.add_argument('--f_dim', default=3, type=int)
     parser.add_argument('--w_dim', default=3, type=int)
-    parser.add_argument('--decoder_dims', default=[20], nargs='+',
+    parser.add_argument('--decoder_dims', default=[5, 5], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)
     parser.add_argument('--h_dims', default=[20], nargs='+', type=int)
@@ -200,11 +210,13 @@ if __name__ == '__main__':
                         type=sgpvae.utils.misc.str2bool)
     parser.add_argument('--min_sigma', default=1e-3, type=float)
     parser.add_argument('--initial_sigma', default=.1, type=float)
+    parser.add_argument('--transform', default=False, type=str2bool)
+    parser.add_argument('--elbo_subset', default=False, type=str2bool)
 
     # Training.
     parser.add_argument('--epochs', default=2000, type=int)
     parser.add_argument('--cache_freq', default=100, type=int)
-    parser.add_argument('--batch_size', default=256, type=int)
+    parser.add_argument('--batch_size', default=100, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
 
     # General.
