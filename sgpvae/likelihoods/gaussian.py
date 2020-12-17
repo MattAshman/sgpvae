@@ -69,7 +69,7 @@ class AffineHomoGaussian(Likelihood):
         self.likelihood = HomoGaussian(out_dim, sigma, sigma_grad, min_sigma)
 
     def forward(self, z):
-        mu = self.weight.matmul(z.unsqueeze(2)).squeeze(2) + self.bias
+        mu = self.weight.matmul(z.unsqueeze(-1)).squeeze(-1) + self.bias
 
         return self.likelihood(mu)
 
