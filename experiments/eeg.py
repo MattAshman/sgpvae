@@ -77,29 +77,34 @@ def main(args):
             hidden_dims=args.decoder_dims, sigma=args.sigma)
         latent_dim = args.latent_dim
 
+    if args.model in ['mog_gpvae', 'mog_sgpvae']:
+        latent_dim_ = latent_dim * args.n_mixtures
+    else:
+        latent_dim_ = latent_dim
+
     # Approximate likelihood function.
     if args.pinference_net == 'factornet':
         variational_dist = sgpvae.likelihoods.FactorNet(
-            in_dim=y.shape[1], out_dim=latent_dim,
+            in_dim=y.shape[1], out_dim=latent_dim_,
             h_dims=args.h_dims, min_sigma=args.min_sigma,
             init_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'indexnet':
         variational_dist = sgpvae.likelihoods.IndexNet(
-            in_dim=y.shape[1], out_dim=latent_dim,
+            in_dim=y.shape[1], out_dim=latent_dim_,
             inter_dim=args.inter_dim, h_dims=args.h_dims,
             rho_dims=args.rho_dims, min_sigma=args.min_sigma,
             init_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'pointnet':
         variational_dist = sgpvae.likelihoods.PointNet(
-            out_dim=latent_dim, inter_dim=args.inter_dim,
+            out_dim=latent_dim_, inter_dim=args.inter_dim,
             h_dims=args.h_dims, rho_dims=args.rho_dims,
             min_sigma=args.min_sigma, initial_sigma=args.initial_sigma)
 
     elif args.pinference_net == 'zeroimputation':
         variational_dist = sgpvae.likelihoods.NNHeteroGaussian(
-            in_dim=y.shape[1], out_dim=latent_dim,
+            in_dim=y.shape[1], out_dim=latent_dim_,
             hidden_dims=args.h_dims, min_sigma=args.min_sigma,
             init_sigma=args.initial_sigma)
 
@@ -125,6 +130,19 @@ def main(args):
         model = sgpvae.models.VAE(
             likelihood, variational_dist, args.latent_dim)
 
+    elif args.model == 'mog_gpvae':
+        model = sgpvae.models.MoGGPVAE(
+            likelihood, variational_dist, latent_dim, kernel, args.n_mixtures,
+            add_jitter=args.add_jitter)
+
+    elif args.model == 'mog_sgpvae':
+        z_init = torch.linspace(
+            0, x[-1].item(), steps=args.num_inducing).unsqueeze(1)
+
+        model = sgpvae.models.MoGSGPVAE(
+            likelihood, variational_dist, latent_dim, kernel, args.n_mixtures,
+            z_init, add_jitter=args.add_jitter)
+
     else:
         raise ValueError('{} is not a model.'.format(args.model))
 
@@ -142,7 +160,8 @@ def main(args):
             if args.elbo_subset:
                 loss = -elbo_subset(model, x_b, y_b, m_b, num_samples=1)
             else:
-                loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
+                loss = -model.elbo(x_b, y_b, m_b, num_samples=1,
+                                   n_train=len(dataset.x))
 
             loss.backward()
             optimiser.step()
@@ -154,7 +173,23 @@ def main(args):
         if epoch % args.cache_freq == 0:
             elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
             elbo *= dataset.x.shape[0]
+            mean, sigma = model.predict_y(
+                x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
 
+            mean, sigma = mean.numpy(), sigma.numpy()
+            mean = mean * y_std + y_mean
+            sigma = sigma * y_std
+
+            pred = pd.DataFrame(mean, index=train.index,
+                                columns=train.columns)
+            var = pd.DataFrame(sigma ** 2, index=train.index,
+                               columns=train.columns)
+
+            smse = sgpvae.utils.metric.smse(pred, test).mean()
+            mll = sgpvae.utils.metric.mll(pred, var, test).mean()
+
+            tqdm.tqdm.write('\nSMSE: {:.3f}'.format(smse))
+            tqdm.tqdm.write('MLL: {:.3f}'.format(mll))
             tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
 
     # Evaluate model performance.
@@ -212,6 +247,7 @@ if __name__ == '__main__':
     parser.add_argument('--initial_sigma', default=.1, type=float)
     parser.add_argument('--transform', default=False, type=str2bool)
     parser.add_argument('--elbo_subset', default=False, type=str2bool)
+    parser.add_argument('--n_mixtures', default=2, type=int)
 
     # Training.
     parser.add_argument('--epochs', default=2000, type=int)
