@@ -3,13 +3,9 @@ import numpy as np
 import pandas as pd
 import tqdm
 import torch
-
-# Install modules from parent directory.
-import sys
-sys.path.append('../')
 import sgpvae
 
-from data.eeg import load
+from scripts.data.eeg import load
 from sgpvae.utils.misc import str2bool, save
 from sgpvae.utils.training import elbo_subset
 

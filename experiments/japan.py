@@ -3,15 +3,11 @@ import numpy as np
 import pandas as pd
 import tqdm
 import torch
+import sgpvae
 
 from scipy.cluster.vq import kmeans2
 
-# Install modules from parent directory.
-import sys
-sys.path.append('../')
-import sgpvae
-
-from data.japan import load
+from scripts.data.japan import load
 from sgpvae.utils.misc import str2bool, save
 
 torch.set_default_dtype(torch.float64)
