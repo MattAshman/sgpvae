@@ -151,46 +151,47 @@ def main(args):
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     epoch_iter = tqdm.tqdm(range(args.epochs), desc='Epoch')
-    for epoch in epoch_iter:
-        losses = []
-        for batch in loader:
-            x_b, y_b, m_b, idx_b = batch
+    with torch.autograd.set_detect_anomaly(False):
+        for epoch in epoch_iter:
+            losses = []
+            for batch in loader:
+                x_b, y_b, m_b, idx_b = batch
 
-            optimiser.zero_grad()
-            if args.elbo_subset:
-                loss = -elbo_subset(model, x_b, y_b, m_b, num_samples=1)
-            else:
-                loss = -model.elbo(x_b, y_b, m_b, num_samples=1,
-                                   n_train=len(dataset.x))
+                optimiser.zero_grad()
+                if args.elbo_subset:
+                    loss = -elbo_subset(model, x_b, y_b, m_b, num_samples=1)
+                else:
+                    loss = -model.elbo(x_b, y_b, m_b, num_samples=1,
+                                       n_train=len(dataset.x))
 
-            loss.backward()
-            optimiser.step()
+                loss.backward()
+                optimiser.step()
 
-            losses.append(loss.item())
+                losses.append(loss.item())
 
-        epoch_iter.set_postfix(loss=np.mean(losses))
+            epoch_iter.set_postfix(loss=np.mean(losses))
 
-        if epoch % args.cache_freq == 0:
-            elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
-            elbo *= dataset.x.shape[0]
-            mean, sigma = model.predict_y(
-                x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
+            if epoch % args.cache_freq == 0:
+                elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
+                elbo *= dataset.x.shape[0]
+                mean, sigma = model.predict_y(
+                    x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
 
-            mean, sigma = mean.numpy(), sigma.numpy()
-            mean = mean * y_std + y_mean
-            sigma = sigma * y_std
+                mean, sigma = mean.numpy(), sigma.numpy()
+                mean = mean * y_std + y_mean
+                sigma = sigma * y_std
 
-            pred = pd.DataFrame(mean, index=train.index,
-                                columns=train.columns)
-            var = pd.DataFrame(sigma ** 2, index=train.index,
-                               columns=train.columns)
+                pred = pd.DataFrame(mean, index=train.index,
+                                    columns=train.columns)
+                var = pd.DataFrame(sigma ** 2, index=train.index,
+                                   columns=train.columns)
 
-            smse = sgpvae.utils.metric.smse(pred, test).mean()
-            mll = sgpvae.utils.metric.mll(pred, var, test).mean()
+                smse = sgpvae.utils.metric.smse(pred, test).mean()
+                mll = sgpvae.utils.metric.mll(pred, var, test).mean()
 
-            tqdm.tqdm.write('\nSMSE: {:.3f}'.format(smse))
-            tqdm.tqdm.write('MLL: {:.3f}'.format(mll))
-            tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
+                tqdm.tqdm.write('\nSMSE: {:.3f}'.format(smse))
+                tqdm.tqdm.write('MLL: {:.3f}'.format(mll))
+                tqdm.tqdm.write('ELBO: {:.3f}'.format(elbo))
 
     # Evaluate model performance.
     elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)

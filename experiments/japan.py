@@ -329,7 +329,7 @@ if __name__ == '__main__':
     # GPVAE.
     parser.add_argument('--model', default='sgpvae')
     parser.add_argument('--likelihood', default='nn', type=str)
-    parser.add_argument('--pinference_net', default='indexnet', type=str)
+    parser.add_argument('--pinference_net', default='factornet', type=str)
     parser.add_argument('--latent_dim', default=3, type=int)
     parser.add_argument('--f_dim', default=3, type=int)
     parser.add_argument('--w_dim', default=3, type=int)

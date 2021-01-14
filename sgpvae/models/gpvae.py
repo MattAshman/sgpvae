@@ -118,7 +118,7 @@ class GPVAE(VAE):
 
             return qf
 
-    def elbo(self, x, y, mask=None, mask_q=None, num_samples=1):
+    def elbo(self, x, y, mask=None, mask_q=None, num_samples=1, **kwargs):
         """Monte Carlo estimate of the evidence lower bound."""
         # Use y_q and mask_q to obtain approximate likelihoods.
         if mask_q is None:
@@ -198,7 +198,10 @@ class SGPVAE(GPVAE):
             self.z = nn.Parameter(z, requires_grad=True)
 
     def qf(self, x, y=None, pu=None, lf=None, mask=None, diag=False,
-           x_test=None, full_cov=False):
+           x_test=None, full_cov=False, n_train=None):
+        if n_train is None:
+            n_train = x.shape[0]
+
         if pu is None:
             pu = self.pf(self.z)
 
@@ -222,14 +225,20 @@ class SGPVAE(GPVAE):
 
         # B = I + A * \Sigma_{\phi}^{-1} * A^T.
         b = a.matmul(lf_precision).matmul(a.transpose(-1, -2))
+        # Scale to form unbiased estimate of B (and thus natural parameters).
+        b *= n_train / x.shape[0]
         b = add_diagonal(b, 1)
         b_chol = torch.cholesky(b)
 
-        # c = Lb^{-1} * Lu^{-1} * Kuf * \Sigma_{\phi}^{-1} * \mu_{\phi}
-        c = a.matmul(lf_precision).matmul(lf_mu.unsqueeze(2))
+        # c = Lb^{-1} * \sum_n v_n^{-1} * Kuu^{-1} * Kuf * g_n.
+        # c = (lf_sigma.pow(-2) * lf_mu).unsqueeze(-2).matmul(
+        #     a.transpose(-1, -2)).squeeze(-2).unsqueeze(-1)
+        c = a.matmul(lf_precision.matmul(lf_mu.unsqueeze(-1)))
         c = torch.triangular_solve(c, b_chol, upper=False)[0]
+        # Scale to form unbiased estimate of c (and thus natural parameters).
+        c = c * (n_train / x.shape[0])
 
-        # d = Lu^{-T} * Lb^{-T} * c
+        # d = Kuu^{-1} * m = Lu^{-T} * Lb^{-T} * c.
         d = torch.triangular_solve(c, b_chol.transpose(-1, -2), upper=True)[0]
         d = torch.triangular_solve(d, pu_chol.transpose(-1, -2), upper=True)[0]
 
@@ -279,11 +288,97 @@ class SGPVAE(GPVAE):
 
             return qf, qu
 
-    def elbo(self, x, y, mask=None, num_samples=1):
+    # def qf(self, x, y=None, pu=None, lf=None, mask=None, diag=False,
+    #        x_test=None, full_cov=False):
+    #     if pu is None:
+    #         pu = self.pf(self.z)
+    #
+    #     # Cholesky factor.
+    #     pu_chol = pu.scale_tril
+    #
+    #     if lf is None:
+    #         lf = self.lf(y, mask)
+    #
+    #     # Reshape.
+    #     lf_mu = lf.mean.transpose(0, 1)
+    #     lf_sigma = lf.stddev.transpose(0, 1)
+    #     lf_precision = lf_sigma.pow(-2).diag_embed()
+    #
+    #     # GP conditional prior.
+    #     kfu = self.kernels.forward(x, self.z)
+    #     kuf = kfu.transpose(-1, -2)
+    #
+    #     # A = Lu^{-1} * Kuf.
+    #     a = torch.triangular_solve(kuf, pu_chol, upper=False)[0]
+    #
+    #     # B = I + A * \Sigma_{\phi}^{-1} * A^T.
+    #     b = a.matmul(lf_precision).matmul(a.transpose(-1, -2))
+    #     b = add_diagonal(b, 1)
+    #     b_chol = torch.cholesky(b)
+    #
+    #     # c = Lb^{-1} * Lu^{-1} * Kuf * \Sigma_{\phi}^{-1} * \mu_{\phi}
+    #     c = a.matmul(lf_precision).matmul(lf_mu.unsqueeze(2))
+    #     c = torch.triangular_solve(c, b_chol, upper=False)[0]
+    #
+    #     # d = Lu^{-T} * Lb^{-T} * c
+    #     d = torch.triangular_solve(c, b_chol.transpose(-1, -2), upper=True)[0]
+    #     d = torch.triangular_solve(d, pu_chol.transpose(-1, -2), upper=True)[0]
+    #
+    #     if x_test is not None:
+    #         # GP prior.
+    #         ps = self.pf(x_test, diag=(not full_cov))
+    #         ps_cov = ps.covariance_matrix
+    #
+    #         # GP conditional prior.
+    #         ksu = self.kernels.forward(x_test, self.z)
+    #         kus = ksu.transpose(-1, -2)
+    #
+    #         # e = Lu^{-1} * Kus.
+    #         e = torch.triangular_solve(kus, pu_chol, upper=False)[0]
+    #
+    #         # g = Lb^{-1} * e
+    #         g = torch.triangular_solve(e, b_chol, upper=False)[0]
+    #
+    #         qs_mu = ksu.matmul(d).squeeze(2)
+    #         qs_cov = (ps_cov - e.transpose(-1, -2).matmul(e)
+    #                   + g.transpose(-1, -2).matmul(g))
+    #         qs = MultivariateNormal(qs_mu, qs_cov)
+    #
+    #         return qs, None
+    #
+    #     else:
+    #         pf = self.pf(x, diag)
+    #         # Covariance and Cholesky factor.
+    #         pf_cov, pf_chol = pf.covariance_matrix, pf.scale_tril
+    #
+    #         # e = Lb^{-1} * a
+    #         e = torch.triangular_solve(a, b_chol, upper=False)[0]
+    #
+    #         qf_cov = (pf_cov - a.transpose(-1, -2).matmul(a)
+    #                   + e.transpose(-1, -2).matmul(e))
+    #         qf_mu = kfu.matmul(d).squeeze(2)
+    #         qf = MultivariateNormal(qf_mu, qf_cov)
+    #
+    #         # g = Lb^{-1} * Lu.
+    #         g = torch.triangular_solve(pu_chol, b_chol, upper=False)[0]
+    #
+    #         qu_mu = torch.triangular_solve(c, b_chol.transpose(-1, -2),
+    #                                        upper=True)[0]
+    #         qu_mu = pu_chol.matmul(qu_mu).squeeze(2)
+    #         qu_cov = g.transpose(-1, -2).matmul(g)
+    #         qu = MultivariateNormal(qu_mu, qu_cov)
+    #
+    #         return qf, qu
+
+    def elbo(self, x, y, mask=None, num_samples=1, n_train=None):
         """Monte Carlo estimate of the evidence lower bound."""
+        # Used to normalise KL term.
+        if n_train is None:
+            n_train = y.shape[0]
+
         pu = self.pf(self.z)
         lf = self.lf(y, mask)
-        qf, qu = self.qf(x, pu=pu, lf=lf)
+        qf, qu = self.qf(x, pu=pu, lf=lf, n_train=n_train)
 
         # KL(q(u) || p(u)) term.
         kl = kl_divergence(qu, pu).sum()
@@ -301,9 +396,9 @@ class SGPVAE(GPVAE):
                 log_py_f += self.likelihood.log_prob(f.T, y).sum()
 
         log_py_f /= num_samples
-        elbo = log_py_f - kl
+        elbo = (log_py_f / y.shape[0]) - (kl / n_train)
 
-        return elbo / y.shape[0]
+        return elbo
 
     def predict_y(self, x, y=None, mask=None, x_test=None, full_cov=True,
                   num_samples=1):
