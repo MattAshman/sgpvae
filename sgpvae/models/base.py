@@ -34,10 +34,14 @@ class VAE(nn.Module):
 
         return qf
 
-    def elbo(self, y, mask=None, num_samples=1):
+    def elbo(self, y, mask=None, mask_q=None, num_samples=1, **kwargs):
         """Monte Carlo estimate of the evidence lower bound."""
+        # Use y_q and mask_q to obtain approximate likelihoods.
+        if mask_q is None:
+            mask_q = mask
+
         pf = self.pf()
-        qf = self.qf(y, mask)
+        qf = self.qf(y, mask_q)
 
         # KL(q(f) || p(f) term.
         kl = kl_divergence(qf, pf).sum()
@@ -53,7 +57,7 @@ class VAE(nn.Module):
 
         return elbo / y.shape[0]
 
-    def predict_y(self, y=None, num_samples=1):
+    def predict_y(self, y=None, num_samples=1, **kwargs):
         """Sample predictive posterior."""
         if y is None:
             qf = self.pf()
@@ -67,9 +71,8 @@ class VAE(nn.Module):
             # Output conditional posterior distribution.
             py_f = self.likelihood(f)
             y_mus.append(py_f.mean)
+            y_sigmas.append(py_f.stddev)
             y_samples.append(py_f.sample())
 
-        y_mu = torch.stack(y_mus).mean(0).detach()
-        y_sigma = torch.stack(y_samples).std(0).detach()
-
-        return y_mu, y_sigma, y_samples
+        return torch.stack(y_mus), torch.stack(y_sigmas), torch.stack(
+            y_samples)

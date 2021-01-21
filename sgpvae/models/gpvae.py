@@ -166,12 +166,11 @@ class GPVAE(VAE):
             # Output conditional posterior distribution.
             py_f = self.likelihood(f.T)
             y_mus.append(py_f.mean)
+            y_sigmas.append(py_f.stddev)
             y_samples.append(py_f.sample())
 
-        y_mu = torch.stack(y_mus).mean(0).detach()
-        y_sigma = torch.stack(y_samples).std(0).detach()
-
-        return y_mu, y_sigma, y_samples
+        return torch.stack(y_mus), torch.stack(y_sigmas), torch.stack(
+            y_samples)
 
 
 class SGPVAE(GPVAE):
@@ -370,14 +369,18 @@ class SGPVAE(GPVAE):
     #
     #         return qf, qu
 
-    def elbo(self, x, y, mask=None, num_samples=1, n_train=None):
+    def elbo(self, x, y, mask=None, mask_q=None, num_samples=1,
+             n_train=None, beta=1.):
         """Monte Carlo estimate of the evidence lower bound."""
         # Used to normalise KL term.
         if n_train is None:
             n_train = y.shape[0]
 
+        if mask_q is None:
+            mask_q = mask
+
         pu = self.pf(self.z)
-        lf = self.lf(y, mask)
+        lf = self.lf(y, mask_q)
         qf, qu = self.qf(x, pu=pu, lf=lf, n_train=n_train)
 
         # KL(q(u) || p(u)) term.
@@ -396,7 +399,7 @@ class SGPVAE(GPVAE):
                 log_py_f += self.likelihood.log_prob(f.T, y).sum()
 
         log_py_f /= num_samples
-        elbo = (log_py_f / y.shape[0]) - (kl / n_train)
+        elbo = (log_py_f / y.shape[0]) - beta * (kl / n_train)
 
         return elbo
 
@@ -425,9 +428,8 @@ class SGPVAE(GPVAE):
             # Output conditional posterior distribution.
             py_f = self.likelihood(f.T)
             y_mus.append(py_f.mean)
+            y_sigmas.append(py_f.stddev)
             y_samples.append(py_f.sample())
 
-        y_mu = torch.stack(y_mus).mean(0).detach()
-        y_sigma = torch.stack(y_samples).std(0).detach()
-
-        return y_mu, y_sigma, y_samples
+        return torch.stack(y_mus), torch.stack(y_sigmas), torch.stack(
+            y_samples)

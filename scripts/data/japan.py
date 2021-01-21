@@ -9,7 +9,6 @@ __all__ = ['load']
 
 
 # Keep fixed for reproducibility.
-np.random.seed(1)
 cache_weekly = data_path('japan', 'weekly', 'experiment.pickle')
 
 
@@ -48,19 +47,19 @@ def _parse():
     df['week'] = (df['date'] - df.iloc[0]['date']).dt.days // n
     df['day'] = (df['date'] - df.iloc[0]['date']).dt.days % n
 
-    observations = ['TMAX', 'TMIN', 'TAVG']
+    observations = ['PRCP', 'TMAX', 'TMIN', 'TAVG']
     test_idx = [[] for _ in observations]
     for week, week_df in df.groupby('week'):
         # Set TAVG for middle three days to missing.
         mid_df = week_df[week_df['day'].isin([1, 2, 3, 4, 5])]
         test_idx[2] += list(mid_df.index)
 
-        # Set 25% of TMAX and TMIN values to missing.
+        # Set 25% of other observation values to missing.
         m = len(week_df) // 4
-        test_idx[0] += list(np.random.choice(list(week_df.index), m,
-                                             replace=False))
-        test_idx[1] += list(np.random.choice(list(week_df.index), m,
-                                             replace=False))
+        for i in range(len(observations)):
+            np.random.seed(i)
+            test_idx[i] += list(np.random.choice(list(week_df.index), m,
+                                                 replace=False))
 
     # Train indices are all those that aren't in test indices.
     train_idx = [list(set(df.index.tolist()) - set(idx)) for idx in test_idx]
@@ -73,7 +72,7 @@ def _parse():
         test[obs][train_idx_] = np.nan
 
     # Set all other nans in test df.
-    for obs in ['PRCP', 'SNWD']:
+    for obs in ['SNWD']:
         test[obs][:] = np.nan
 
     train_1980 = train[train['date'].dt.year == 1980]

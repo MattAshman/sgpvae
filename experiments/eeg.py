@@ -146,6 +146,10 @@ def main(args):
     model.train(True)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+    epochs = []
+    elbos = []
+    smses = []
+    mlls = []
     epoch_iter = tqdm.tqdm(range(args.epochs), desc='Epoch')
     with torch.autograd.set_detect_anomaly(False):
         for epoch in epoch_iter:
@@ -155,7 +159,8 @@ def main(args):
 
                 optimiser.zero_grad()
                 if args.elbo_subset:
-                    loss = -elbo_subset(model, x_b, y_b, m_b, num_samples=1)
+                    loss = -elbo_subset(model, x_b, y_b, m_b, num_samples=1,
+                                        p=0.25, n_train=len(dataset.x))
                 else:
                     loss = -model.elbo(x_b, y_b, m_b, num_samples=1,
                                        n_train=len(dataset.x))
@@ -168,22 +173,29 @@ def main(args):
             epoch_iter.set_postfix(loss=np.mean(losses))
 
             if epoch % args.cache_freq == 0:
-                elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
+                elbo = model.elbo(dataset.x, dataset.y, dataset.m,
+                                  num_samples=100)
                 elbo *= dataset.x.shape[0]
-                mean, sigma = model.predict_y(
-                    x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
+                means, sigmas = model.predict_y(
+                    x=dataset.x, y=dataset.y, mask=dataset.m,
+                    num_samples=100)[:2]
 
-                mean, sigma = mean.numpy(), sigma.numpy()
-                mean = mean * y_std + y_mean
-                sigma = sigma * y_std
+                means = means.detach() * y_std + y_mean
+                sigmas = sigmas.detach() * y_std
+                mean = means.detach().numpy().mean(axis=0)
 
                 pred = pd.DataFrame(mean, index=train.index,
                                     columns=train.columns)
-                var = pd.DataFrame(sigma ** 2, index=train.index,
-                                   columns=train.columns)
 
                 smse = sgpvae.utils.metric.smse(pred, test).mean()
-                mll = sgpvae.utils.metric.mll(pred, var, test).mean()
+                mll = sgpvae.utils.metric.gmm_mll(
+                    means[:, -100:, -3:], sigmas[:, -100:, -3:],
+                    test.values).mean()
+
+                epochs.append(epoch)
+                elbos.append(elbo)
+                smses.append(smse)
+                mlls.append(mll)
 
                 tqdm.tqdm.write('\nSMSE: {:.3f}'.format(smse))
                 tqdm.tqdm.write('MLL: {:.3f}'.format(mll))
@@ -192,27 +204,34 @@ def main(args):
     # Evaluate model performance.
     elbo = model.elbo(dataset.x, dataset.y, dataset.m, num_samples=100)
     elbo *= dataset.x.shape[0]
-    mean, sigma = model.predict_y(
-        x=dataset.x, y=dataset.y, mask=dataset.m, num_samples=100)[:2]
+    means, sigmas = model.predict_y(
+        x=dataset.x, y=dataset.y, mask=dataset.m,
+        num_samples=100)[:2]
 
-    mean, sigma = mean.numpy(), sigma.numpy()
-    mean = mean * y_std + y_mean
-    sigma = sigma * y_std
+    means = means.detach() * y_std + y_mean
+    sigmas = sigmas.detach() * y_std
+    mean = means.detach().numpy().mean(axis=0)
 
     pred = pd.DataFrame(mean, index=train.index,
                         columns=train.columns)
-    var = pd.DataFrame(sigma ** 2, index=train.index,
-                       columns=train.columns)
 
     smse = sgpvae.utils.metric.smse(pred, test).mean()
-    mll = sgpvae.utils.metric.mll(pred, var, test).mean()
+    mll = sgpvae.utils.metric.gmm_mll(
+        means[:, -100:, -3:], sigmas[:, -100:, -3:],
+        test.values).mean()
+
+    epochs.append(epoch)
+    elbos.append(elbo)
+    smses.append(smse)
+    mlls.append(mll)
 
     print('\nSMSE: {:.3f}'.format(smse))
     print('MLL: {:.3f}'.format(mll))
     print('ELBO: {:.3f}'.format(elbo))
 
     if args.save:
-        metrics = {'ELBO': elbo, 'SMSE': smse, 'MLL': mll}
+        metrics = {'ELBO': elbo, 'SMSE': smse, 'MLL': mll, 'ELBOs': elbos,
+                   'SMSEs': smses, 'MLLs': mlls, 'Epochs': epochs}
         save(vars(args), metrics)
 
 
@@ -230,7 +249,7 @@ if __name__ == '__main__':
     parser.add_argument('--latent_dim', default=3, type=int)
     parser.add_argument('--f_dim', default=3, type=int)
     parser.add_argument('--w_dim', default=3, type=int)
-    parser.add_argument('--decoder_dims', default=[5, 5], nargs='+',
+    parser.add_argument('--decoder_dims', default=[10, 10], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)
     parser.add_argument('--h_dims', default=[20], nargs='+', type=int)

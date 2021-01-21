@@ -1,6 +1,5 @@
 import numpy as np
-
-__all__ = ['mse', 'rmse', 'mll', 'mae', 'mre', 'smll', 'smse', 'srmse', 'r2']
+import torch
 
 
 def mre(mean, data):
@@ -66,6 +65,20 @@ def mll(mean, variance, data):
     """
     return (0.5 * np.log(2 * np.pi * variance) +
             0.5 * (mean - data) ** 2 / variance).mean()
+
+
+def gmm_mll(means, variances, data):
+    """Mean log loss for mixture of Gaussian model.
+
+    :param means: (tensor) means of prediction.
+    :param variances: (tensor) variances of prediction.
+    :param data: (tensor) reference data.
+    """
+    dist = torch.distributions.Normal(means, variances**0.5)
+    log_probs = dist.log_prob(torch.tensor(data))
+    log_probs = torch.logsumexp(log_probs, dim=0).numpy() - np.log(len(means))
+
+    return np.nanmean(log_probs, axis=0)
 
 
 def smll(mean, variance, data):

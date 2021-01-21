@@ -5,7 +5,7 @@ import numpy as np
 __all__ = ['elbo_subset', 'elbo_mm']
 
 
-def elbo_subset(model, x, y, mask, num_samples=1, k=1, p=0.5):
+def elbo_subset(model, x, y, mask, num_samples=1, k=1, p=0.5, n_train=None):
     elbo = 0
     for _ in range(k):
         mask_q = copy.deepcopy(mask)
@@ -19,7 +19,8 @@ def elbo_subset(model, x, y, mask, num_samples=1, k=1, p=0.5):
             row_q[remove_idx] = 0
             mask_q[n, :] = row_q
 
-        elbo += model.elbo(x, y, mask, mask_q, num_samples)
+        elbo += model.elbo(x=x, y=y, mask=mask, mask_q=mask_q,
+                           num_samples=num_samples, n_train=n_train)
 
     return elbo
 

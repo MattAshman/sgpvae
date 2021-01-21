@@ -84,14 +84,15 @@ def preprocess():
     return preprocessed_data
 
 
-def predict(model, dataset, test, observations, y_mean, y_std):
-    preds = []
-    variances = []
+def predict(model, dataset, y_mean, y_std):
+    all_means = []
+    all_variances = []
+    all_valid_idx = []
 
-    test_iter = tqdm.tqdm(zip(dataset.x, dataset.y, dataset.m, test),
+    test_iter = tqdm.tqdm(zip(dataset.x, dataset.y, dataset.m),
                           desc='Evaluation')
 
-    for x_b, y_b, m_b, df_b in test_iter:
+    for x_b, y_b, m_b in test_iter:
         x_b = x_b.squeeze(0)
         x_test = x_b.clone()
         y_b = y_b.squeeze(0)
@@ -102,26 +103,20 @@ def predict(model, dataset, test, observations, y_mean, y_std):
         x_b = x_b[valid_idx]
         y_b = y_b[valid_idx]
         m_b = m_b[valid_idx]
-        # idx_b = df_b.index[valid_idx]
 
         # Test predictions.
-        mean, sigma = model.predict_y(
+        means, sigmas = model.predict_y(
             x=x_b, y=y_b, mask=m_b, x_test=x_test, num_samples=10)[:2]
 
-        mean = mean.numpy() * y_std + y_mean
-        sigma = sigma.numpy() * y_std
+        means = means * y_std + y_mean
+        sigmas = sigmas * y_std
 
         # Convert to DataFrame and add to lists.
-        pred = pd.DataFrame(mean, index=df_b.index, columns=observations)
-        var = pd.DataFrame(sigma**2, index=df_b.index, columns=observations)
+        all_means.append(means)
+        all_variances.append(sigmas**2)
+        all_valid_idx.append(valid_idx)
 
-        preds.append(pred)
-        variances.append(var)
-
-    preds = pd.concat(preds)
-    variances = pd.concat(variances)
-
-    return preds, variances
+    return all_means, all_variances, all_valid_idx
 
 
 def main(args):
@@ -241,77 +236,174 @@ def main(args):
         for x_b, y_b, m_b, idx_b in batch_iter:
             # Get rid of 3rd-dimension.
             x_b = x_b.squeeze(0)
-            y_b = y_b.squeeze(0)
             m_b = m_b.squeeze(0)
+            new_y_b = y_b.squeeze(0).clone()
 
-            optimiser.zero_grad()
-            loss = -model.elbo(x_b, y_b, m_b, num_samples=1)
-            loss.backward()
-            optimiser.step()
+            # Set back to nans to make missing=True work.
+            new_y_b[m_b == 0.] = np.nan
 
-            losses.append(loss.item())
+            # Sub batch iter.
+            subbatch_dataset = sgpvae.utils.dataset.TupleDataset(
+                x_b, new_y_b, missing=True)
+            subbatch_loader = torch.utils.data.DataLoader(
+                subbatch_dataset, batch_size=args.batch_size, shuffle=True)
+
+            for x_sb, y_sb, m_sb, idx_sb in iter(subbatch_loader):
+                optimiser.zero_grad()
+                if args.elbo_subset:
+                    loss = -sgpvae.utils.training.elbo_subset(
+                        model, x_sb, y_sb, m_sb, num_samples=1, p=0.25,
+                        n_train=len(x_b))
+                else:
+                    loss = -model.elbo(x=x_sb, y=y_sb, mask=m_sb,
+                                       num_samples=1, n_train=len(x_b))
+                loss.backward()
+                optimiser.step()
+
+                losses.append(loss.item())
 
         epoch_iter.set_postfix(loss=np.mean(losses))
 
         if epoch % args.cache_freq == 0:
             with torch.no_grad():
-                pred_1980, var_1980 = predict(
-                    model, train_1980_dataset, data['test_1980'], observations,
-                    data['y_mean'], data['y_std'])
-                rmse_1980 = sgpvae.utils.metric.rmse(
-                    pred_1980, pd.concat(data['test_1980']))
-                mll_1980 = sgpvae.utils.metric.mll(
-                    pred_1980, var_1980, pd.concat(data['test_1980']))
+                means_1980, variances_1980, valid_idx_1980 = predict(
+                    model, train_1980_dataset,  data['y_mean'], data['y_std'])
 
-                pred_1981, var_1981 = predict(
-                    model, train_1981_dataset, data['test_1981'], observations,
-                    data['y_mean'], data['y_std'])
-                rmse_1981 = sgpvae.utils.metric.rmse(
-                    pred_1981, pd.concat(data['test_1981']))
-                mll_1981 = sgpvae.utils.metric.mll(
-                    pred_1981, var_1981, pd.concat(data['test_1981']))
+                means_1980 = torch.cat(means_1980, dim=1)
+                variances_1980 = torch.cat(variances_1980, dim=1)
 
-            tqdm.tqdm.write('\nRMSE 1980: {:.3f}'.format(rmse_1980['TAVG']))
-            tqdm.tqdm.write('MLL 1980: {:.3f}'.format(mll_1980['TAVG']))
-            tqdm.tqdm.write('\nRMSE 1981: {:.3f}'.format(rmse_1981['TAVG']))
-            tqdm.tqdm.write('MLL 1981: {:.3f}'.format(mll_1981['TAVG']))
+                if args.model == 'vae':
+                    test_data_1980 = []
+                    for group, valid_idx in zip(data['test_1980'],
+                                                valid_idx_1980):
+                        test_data_1980.append(group[observations].values[
+                                                  valid_idx])
+
+                    test_data_1980 = np.concatenate(test_data_1980)
+                else:
+                    test_data_1980 = pd.concat(
+                        data['test_1980'])[observations].values
+
+                rmse_1980 = np.nanmean(
+                    (np.mean(means_1980.numpy(), axis=0)
+                     - test_data_1980) ** 2, axis=0) ** .5
+                smse_1980 = (rmse_1980 ** 2 / np.nanmean(
+                    (np.nanmean(test_data_1980, axis=0) - test_data_1980) ** 2,
+                    axis=0))
+                mll_1980 = sgpvae.utils.metric.gmm_mll(
+                    means_1980, variances_1980, test_data_1980)
+
+                means_1981, variances_1981, valid_idx_1981 = predict(
+                    model, train_1981_dataset, data['y_mean'], data['y_std'])
+
+                means_1981 = torch.cat(means_1981, dim=1)
+                variances_1981 = torch.cat(variances_1981, dim=1)
+
+                if args.model == 'vae':
+                    test_data_1981 = []
+                    for group, valid_idx in zip(data['test_1981'],
+                                                valid_idx_1981):
+                        test_data_1981.append(group[observations].values[
+                                                  valid_idx])
+
+                    test_data_1981 = np.concatenate(test_data_1981)
+                else:
+                    test_data_1981 = pd.concat(
+                        data['test_1981'])[observations].values
+
+                rmse_1981 = np.nanmean(
+                    (np.mean(means_1981.numpy(), axis=0)
+                     - test_data_1981) ** 2, axis=0) ** .5
+                smse_1981 = (rmse_1981 ** 2 / np.nanmean(
+                    (np.nanmean(test_data_1981, axis=0) - test_data_1981) ** 2,
+                    axis=0))
+                mll_1981 = sgpvae.utils.metric.gmm_mll(
+                    means_1981, variances_1981, test_data_1981)
+
+            tqdm.tqdm.write('\nRMSE 1980: {}'.format(np.round(rmse_1980, 2)))
+            tqdm.tqdm.write('MLL 1980: {}'.format(np.round(mll_1980, 2)))
+            tqdm.tqdm.write('SMSE 1980: {}'.format(np.round(smse_1980, 2)))
+            tqdm.tqdm.write('\nRMSE 1981: {}'.format(np.round(rmse_1981, 2)))
+            tqdm.tqdm.write('MLL 1981: {}'.format(np.round(mll_1981, 2)))
+            tqdm.tqdm.write('SMSE 1981: {}'.format(np.round(smse_1981, 2)))
 
     # Evaluate model performance.
     with torch.no_grad():
-        elbo = 0
-        for (x_b, y_b, m_b, idx_b) in loader:
-            # Get rid of 3rd-dimension.
-            x_b = x_b.squeeze(0)
-            y_b = y_b.squeeze(0)
-            m_b = m_b.squeeze(0)
+        # elbo = 0
+        # for (x_b, y_b, m_b, idx_b) in loader:
+        #     # Get rid of 3rd-dimension.
+        #     x_b = x_b.squeeze(0)
+        #     y_b = y_b.squeeze(0)
+        #     m_b = m_b.squeeze(0)
+        #
+        #     elbo += model.elbo(x_b, y_b, m_b, num_samples=10)
 
-            elbo += model.elbo(x_b, y_b, m_b, num_samples=10)
+        means_1980, variances_1980, valid_idx_1980 = predict(
+            model, train_1980_dataset, data['y_mean'], data['y_std'])
 
-        pred_1980, var_1980 = predict(
-            model, train_1980_dataset, data['test_1980'], observations,
-            data['y_mean'], data['y_std'])
-        rmse_1980 = sgpvae.utils.metric.rmse(
-            pred_1980, pd.concat(data['test_1980']))
-        mll_1980 = sgpvae.utils.metric.mll(
-            pred_1980, var_1980, pd.concat(data['test_1980']))
+        means_1980 = torch.cat(means_1980, dim=1)
+        variances_1980 = torch.cat(variances_1980, dim=1)
 
-        pred_1981, var_1981 = predict(
-            model, train_1981_dataset, data['test_1981'], observations,
-            data['y_mean'], data['y_std'])
-        rmse_1981 = sgpvae.utils.metric.rmse(
-            pred_1981, pd.concat(data['test_1980']))
-        mll_1981 = sgpvae.utils.metric.mll(
-            pred_1981, var_1981, pd.concat(data['test_1980']))
+        if args.model == 'vae':
+            test_data_1980 = []
+            for group, valid_idx in zip(data['test_1980'],
+                                        valid_idx_1980):
+                test_data_1980.append(group[observations].values[
+                                          valid_idx])
 
-    print('\nELBO: {:.3f}'.format(elbo))
-    print('\nRMSE 1980: {:.3f}'.format(rmse_1980))
-    print('MLL 1980: {:.3f}'.format(mll_1980))
-    print('\nRMSE 1981: {:.3f}'.format(rmse_1981))
-    print('MLL 1981: {:.3f}'.format(mll_1981))
+            test_data_1980 = np.concatenate(test_data_1980)
+        else:
+            test_data_1980 = pd.concat(
+                data['test_1980'])[observations].values
+
+        rmse_1980 = np.nanmean(
+            (np.mean(means_1980.numpy(), axis=0)
+             - test_data_1980) ** 2, axis=0) ** .5
+        smse_1980 = (rmse_1980 ** 2 / np.nanmean(
+            (np.nanmean(test_data_1980, axis=0) - test_data_1980) ** 2,
+            axis=0))
+        mll_1980 = sgpvae.utils.metric.gmm_mll(
+            means_1980, variances_1980, test_data_1980)
+
+        means_1981, variances_1981, valid_idx_1981 = predict(
+            model, train_1981_dataset, data['y_mean'], data['y_std'])
+
+        means_1981 = torch.cat(means_1981, dim=1)
+        variances_1981 = torch.cat(variances_1981, dim=1)
+
+        if args.model == 'vae':
+            test_data_1981 = []
+            for group, valid_idx in zip(data['test_1981'],
+                                        valid_idx_1981):
+                test_data_1981.append(group[observations].values[
+                                          valid_idx])
+
+            test_data_1981 = np.concatenate(test_data_1981)
+        else:
+            test_data_1981 = pd.concat(
+                data['test_1981'])[observations].values
+
+        rmse_1981 = np.nanmean(
+            (np.mean(means_1981.numpy(), axis=0)
+             - test_data_1981) ** 2, axis=0) ** .5
+        smse_1981 = (rmse_1981 ** 2 / np.nanmean(
+            (np.nanmean(test_data_1981, axis=0) - test_data_1981) ** 2,
+            axis=0))
+        mll_1981 = sgpvae.utils.metric.gmm_mll(
+            means_1981, variances_1981, test_data_1981)
+
+    # print('\nELBO: {:.3f}'.format(elbo))
+    print('\nRMSE 1980: {}'.format(np.round(rmse_1980, 2)))
+    print('MLL 1980: {}'.format(np.round(mll_1980, 2)))
+    print('SMSE 1980: {}'.format(np.round(smse_1980, 2)))
+    print('\nRMSE 1980: {}'.format(np.round(rmse_1981, 2)))
+    print('MLL 1980: {}'.format(np.round(mll_1981, 2)))
+    print('SMSE 1980: {}'.format(np.round(smse_1981, 2)))
 
     if args.save:
-        metrics = {'ELBO': elbo, 'RMSE 1980': rmse_1980, 'mll_1980': mll_1980,
-                   'RMSE 1981': rmse_1981, 'mll_1981': mll_1981}
+        metrics = {'RMSE 1980': rmse_1980, 'MLL 1980': mll_1980,
+                   'SMSE 1980': smse_1980, 'RMSE 1981': rmse_1981,
+                   'MLL 1981': mll_1981, 'SMSE 1981': smse_1981}
         save(vars(args), metrics)
 
 
@@ -329,12 +421,12 @@ if __name__ == '__main__':
     parser.add_argument('--latent_dim', default=3, type=int)
     parser.add_argument('--f_dim', default=3, type=int)
     parser.add_argument('--w_dim', default=3, type=int)
-    parser.add_argument('--decoder_dims', default=[20, 20], nargs='+',
+    parser.add_argument('--decoder_dims', default=[10, 10], nargs='+',
                         type=int)
     parser.add_argument('--sigma', default=0.1, type=float)
-    parser.add_argument('--h_dims', default=[20, 20], nargs='+', type=int)
-    parser.add_argument('--rho_dims', default=[20, 20], nargs='+', type=int)
-    parser.add_argument('--inter_dim', default=20, type=int)
+    parser.add_argument('--h_dims', default=[10, 10], nargs='+', type=int)
+    parser.add_argument('--rho_dims', default=[10, 10], nargs='+', type=int)
+    parser.add_argument('--inter_dim', default=10, type=int)
     parser.add_argument('--num_inducing', default=100, type=int)
     parser.add_argument('--fixed_inducing', default=False,
                         type=sgpvae.utils.misc.str2bool)
@@ -345,10 +437,11 @@ if __name__ == '__main__':
     parser.add_argument('--transform', default=False, type=str2bool)
 
     # Training.
-    parser.add_argument('--epochs', default=51, type=int)
+    parser.add_argument('--epochs', default=36, type=int)
     parser.add_argument('--cache_freq', default=5, type=int)
-    parser.add_argument('--batch_size', type=int)
+    parser.add_argument('--batch_size', default=250, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--elbo_subset', default=False, type=str2bool)
 
     # General.
     parser.add_argument('--save', default=False, type=str2bool)
