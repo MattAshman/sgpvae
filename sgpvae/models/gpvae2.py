@@ -8,13 +8,13 @@ from sgpvae.utils.matrix import add_diagonal
 
 from .base import VAE
 
-__all__ = ['GPVAE', 'SGPVAE']
+__all__ = ['GPVAE2', 'SGPVAE2']
 
 JITTER = 1e-5
 
 
-class GPVAE(VAE):
-    """The GP-VAE model.
+class GPVAE2(VAE):
+    """The GP-VAE model with improved inference.
 
     :param likelihood: likelihood function, p(x|f).
     :param variational_dist: variational distribution, l(f|x).
@@ -52,14 +52,56 @@ class GPVAE(VAE):
 
         return pf
 
-    def lf(self, y, mask=None):
+    def lf(self, x, y, mask=None, pf=None, iterations=1):
         """Return the approximate likelihood."""
-        lf = self.variational_dist(y, mask)
+        if pf is None:
+            pf = self.pf(x)
+
+        # Mean, covariance and Cholesky factor.
+        pf_cov, pf_chol = pf.covariance_matrix, pf.scale_tril
+
+        mus = torch.zeros((x.shape[0], self.latent_dim))
+        variances = torch.diagonal(pf.covariance_matrix, dim1=-2, dim2=-1).T
+
+        z = torch.cat((y, mus, variances), dim=1)
+        z_mask = torch.cat((mask, torch.ones(y.shape[0], 2*self.latent_dim)),
+                           dim=1)
+        lf = self.variational_dist(z, z_mask)
+        for i in range(iterations-1):
+            # Reshape.
+            lf_mu = lf.mean.transpose(0, 1)
+            lf_sigma = lf.stddev.transpose(0, 1)
+            lf_cov = lf_sigma.pow(2).diag_embed()
+
+            # A = I + Lf^{-1} \Sigma_{\phi} Lf^{-T}
+            a = torch.triangular_solve(lf_cov.pow(0.5), pf_chol, upper=False)[
+                0]
+            a = a.matmul(a.transpose(-1, -2))
+            a = add_diagonal(a, 1)
+            a_chol = torch.cholesky(a)
+
+            # B = La^{-1} * Lf^{-1} * \mu_{\phi}.
+            b = torch.triangular_solve(lf_mu.unsqueeze(2), pf_chol,
+                                       upper=False)[0]
+            b = torch.triangular_solve(b, a_chol, upper=False)[0]
+
+            # C = La^{-1} * Lf.
+            c = torch.triangular_solve(pf_chol.transpose(-1, -2), a_chol,
+                                       upper=False)[0]
+
+            qf_mu = c.transpose(-1, -2).matmul(b).squeeze(2)
+            qf_cov = pf_cov - c.transpose(-1, -2).matmul(c)
+
+            mus = qf_mu.T
+            variances = torch.diagonal(qf_cov, dim1=-2, dim2=-1).T
+
+            z = torch.cat((y, mus, variances), dim=1)
+            lf = self.variational_dist(z, z_mask)
 
         return lf
 
     def qf(self, x=None, y=None, pf=None, lf=None, mask=None, diag=False,
-           x_test=None):
+           x_test=None, iterations=1):
         if pf is None:
             pf = self.pf(x, diag)
 
@@ -67,7 +109,7 @@ class GPVAE(VAE):
         pf_cov, pf_chol = pf.covariance_matrix, pf.scale_tril
 
         if lf is None:
-            lf = self.lf(y, mask)
+            lf = self.lf(x, y, mask, pf, iterations)
 
         # Reshape.
         lf_mu = lf.mean.transpose(0, 1)
@@ -118,14 +160,15 @@ class GPVAE(VAE):
 
             return qf
 
-    def elbo(self, x, y, mask=None, mask_q=None, num_samples=1, **kwargs):
+    def elbo(self, x, y, mask=None, mask_q=None, num_samples=1,
+             lf_iterations=1, **kwargs):
         """Monte Carlo estimate of the evidence lower bound."""
         # Use y_q and mask_q to obtain approximate likelihoods.
         if mask_q is None:
             mask_q = mask
 
         pf = self.pf(x)
-        lf = self.lf(y, mask_q)
+        lf = self.lf(x, y, mask_q, pf, lf_iterations)
         qf = self.qf(pf=pf, lf=lf)
 
         # KL(q(f) || p(f)) term.
@@ -150,7 +193,7 @@ class GPVAE(VAE):
         return elbo / y.shape[0]
 
     def predict_y(self, x, y=None, mask=None, x_test=None, num_samples=1,
-                  **kwargs):
+                  lf_iterations=1):
         """Sample predictive posterior."""
         if y is None:
             if x_test is None:
@@ -158,7 +201,8 @@ class GPVAE(VAE):
             else:
                 qf = self.pf(x_test)
         else:
-            qf = self.qf(x=x, y=y, mask=mask, x_test=x_test)
+            qf = self.qf(x=x, y=y, mask=mask, x_test=x_test,
+                         iterations=lf_iterations)
 
         f_samples = qf.sample((num_samples,))
 
@@ -174,8 +218,8 @@ class GPVAE(VAE):
             y_samples)
 
 
-class SGPVAE(GPVAE):
-    """The SGP-VAE model.
+class SGPVAE2(GPVAE2):
+    """The SGP-VAE model with improved inference.
 
     :param likelihood: likelihood function, p(x|f).
     :param variational_dist: variational distribution, l(f|x).

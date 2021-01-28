@@ -8,13 +8,13 @@ from sgpvae.utils.matrix import add_diagonal
 
 from .base import VAE
 
-__all__ = ['GPVAE', 'SGPVAE']
+__all__ = ['GPVAE3', 'SGPVAE3']
 
 JITTER = 1e-5
 
 
-class GPVAE(VAE):
-    """The GP-VAE model.
+class GPVAE3(VAE):
+    """The GP-VAE model with improved inference.
 
     :param likelihood: likelihood function, p(x|f).
     :param variational_dist: variational distribution, l(f|x).
@@ -52,9 +52,44 @@ class GPVAE(VAE):
 
         return pf
 
-    def lf(self, y, mask=None):
+    def lf(self, x, y, mask=None, pf=None):
         """Return the approximate likelihood."""
+        if pf is None:
+            pf = self.pf(x)
+
+        # Mean, covariance and Cholesky factor.
+        pf_cov, pf_chol = pf.covariance_matrix, pf.scale_tril
+
         lf = self.variational_dist(y, mask)
+
+        # Reshape.
+        lf_mu = lf.mean.transpose(0, 1)
+        lf_sigma = lf.stddev.transpose(0, 1)
+        lf_cov = lf_sigma.pow(2).diag_embed()
+
+        # A = I + Lf^{-1} \Sigma_{\phi} Lf^{-T}
+        a = torch.triangular_solve(lf_cov.pow(0.5), pf_chol, upper=False)[
+            0]
+        a = a.matmul(a.transpose(-1, -2))
+        a = add_diagonal(a, 1)
+        a_chol = torch.cholesky(a)
+
+        # B = La^{-1} * Lf^{-1} * \mu_{\phi}.
+        b = torch.triangular_solve(lf_mu.unsqueeze(2), pf_chol,
+                                   upper=False)[0]
+        b = torch.triangular_solve(b, a_chol, upper=False)[0]
+
+        # C = La^{-1} * Lf.
+        c = torch.triangular_solve(pf_chol.transpose(-1, -2), a_chol,
+                                   upper=False)[0]
+
+        qf_mu = c.transpose(-1, -2).matmul(b).squeeze(2)
+        qf_cov = pf_cov - c.transpose(-1, -2).matmul(c)
+
+        mus = qf_mu.T
+        variances = torch.diagonal(qf_cov, dim1=-2, dim2=-1).T
+
+        lf = Normal(mus, variances)
 
         return lf
 
@@ -67,7 +102,7 @@ class GPVAE(VAE):
         pf_cov, pf_chol = pf.covariance_matrix, pf.scale_tril
 
         if lf is None:
-            lf = self.lf(y, mask)
+            lf = self.lf(x, y, mask, pf)
 
         # Reshape.
         lf_mu = lf.mean.transpose(0, 1)
@@ -125,7 +160,7 @@ class GPVAE(VAE):
             mask_q = mask
 
         pf = self.pf(x)
-        lf = self.lf(y, mask_q)
+        lf = self.lf(x, y, mask_q, pf)
         qf = self.qf(pf=pf, lf=lf)
 
         # KL(q(f) || p(f)) term.
@@ -174,8 +209,8 @@ class GPVAE(VAE):
             y_samples)
 
 
-class SGPVAE(GPVAE):
-    """The SGP-VAE model.
+class SGPVAE3(GPVAE3):
+    """The SGP-VAE model with improved inference.
 
     :param likelihood: likelihood function, p(x|f).
     :param variational_dist: variational distribution, l(f|x).
